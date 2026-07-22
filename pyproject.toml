@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-converter"
-version = "0.3.0"
+version = "0.4.0"
 description = "Windows batch PDF converter for HWP, Excel, Word, and PowerPoint"
 readme = "README.md"
 requires-python = ">=3.11"

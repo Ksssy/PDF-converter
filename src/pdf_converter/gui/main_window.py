@@ -21,7 +21,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pdf_converter import __version__
 from pdf_converter.core.models import ConversionItem, ConversionStatus
+from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.file_scanner import is_supported, scan_folder
 from pdf_converter.services.settings import AppSettings, SettingsService
@@ -30,7 +32,7 @@ from pdf_converter.services.settings import AppSettings, SettingsService
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("PDF변환기")
+        self.setWindowTitle(f"PDF변환기 v{__version__}")
         self.resize(1100, 700)
         self.setAcceptDrops(True)
 
@@ -232,9 +234,9 @@ class MainWindow(QMainWindow):
         self.conversion_worker.item_failed.connect(self._on_item_failed)
         self.conversion_worker.item_skipped.connect(self._on_item_skipped)
         self.conversion_worker.progress_changed.connect(self.progress.setValue)
-        self.conversion_worker.completed.connect(self._on_conversion_completed)
         self.conversion_worker.completed.connect(self.conversion_worker.deleteLater)
         self.conversion_worker.completed.connect(self.conversion_thread.quit)
+        self.conversion_worker.completed.connect(self._on_conversion_completed)
         self.conversion_thread.finished.connect(self.conversion_thread.deleteLater)
         self.conversion_thread.finished.connect(self._cleanup_conversion)
 
@@ -288,14 +290,16 @@ class MainWindow(QMainWindow):
         log_path: str,
     ) -> None:
         self.statusBar().showMessage("변환 완료")
-        QMessageBox.information(
+        dialog = ResultDialog(
+            list(self.items),
+            success_count,
+            failure_count,
+            skipped_count,
+            Path(self.output_edit.text().strip()),
+            Path(log_path),
             self,
-            "변환 결과",
-            f"성공: {success_count}개\n"
-            f"실패: {failure_count}개\n"
-            f"건너뜀: {skipped_count}개\n\n"
-            f"로그: {log_path}",
         )
+        dialog.exec()
 
     def _cleanup_conversion(self) -> None:
         self.conversion_worker = None
