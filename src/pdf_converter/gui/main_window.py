@@ -26,7 +26,21 @@ from pdf_converter.core.models import ConversionItem, ConversionStatus
 from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.file_scanner import is_supported, scan_folder
+from pdf_converter.services.printer_service import list_installed_printers
 from pdf_converter.services.settings import AppSettings, SettingsService
+
+
+QUALITY_DESCRIPTIONS = {
+    "최소용량": "120DPI 중심으로 이미지를 강하게 압축합니다. 이메일·보관용에 적합합니다.",
+    "일반": "220DPI 중심으로 용량과 선명도의 균형을 맞춥니다. 일반 문서용입니다.",
+    "고품질": "이미지를 추가 압축하지 않습니다. 도면·사진·확대 인쇄용입니다.",
+}
+
+PRINTER_QUALITY_DESCRIPTIONS = {
+    "최소용량": "선택한 프린터에 200DPI로 출력합니다. 용량을 줄일 때 사용합니다.",
+    "일반": "선택한 프린터에 300DPI로 출력합니다. 일반 인쇄 품질입니다.",
+    "고품질": "선택한 프린터에 450DPI로 출력합니다. 도면·확대 출력용입니다.",
+}
 
 
 class MainWindow(QMainWindow):
@@ -84,9 +98,9 @@ class MainWindow(QMainWindow):
         output_layout.addWidget(QLabel("저장 폴더"))
         self.output_edit = QLineEdit()
         output_layout.addWidget(self.output_edit)
-        browse = QPushButton("찾기")
-        browse.clicked.connect(self.choose_output_folder)
-        output_layout.addWidget(browse)
+        self.output_browse_button = QPushButton("찾기")
+        self.output_browse_button.clicked.connect(self.choose_output_folder)
+        output_layout.addWidget(self.output_browse_button)
         layout.addLayout(output_layout)
 
         options = QHBoxLayout()
@@ -101,6 +115,44 @@ class MainWindow(QMainWindow):
         options.addWidget(self.color_combo)
         options.addStretch()
         layout.addLayout(options)
+
+        self.quality_description = QLabel()
+        self.quality_description.setStyleSheet("color: #666;")
+        self.quality_combo.currentTextChanged.connect(self._update_quality_description)
+        layout.addWidget(self.quality_description)
+
+        printer_layout = QHBoxLayout()
+        printer_layout.addWidget(QLabel("PDF 출력 방식"))
+        self.output_method_combo = QComboBox()
+        self.output_method_combo.addItem("내장 PDF 엔진 (권장)", False)
+        self.output_method_combo.addItem("선택한 PDF 프린터 사용", True)
+        self.output_method_combo.currentIndexChanged.connect(
+            self._update_printer_controls
+        )
+        printer_layout.addWidget(self.output_method_combo)
+
+        printer_layout.addSpacing(15)
+        printer_layout.addWidget(QLabel("프린터"))
+        self.printer_combo = QComboBox()
+        self.printer_combo.setMinimumWidth(300)
+        self.printer_combo.setPlaceholderText("프린터 인식 버튼을 누르세요")
+        self.printer_combo.setToolTip(
+            "PDF를 파일로 저장할 수 있는 가상 프린터를 선택해주세요."
+        )
+        printer_layout.addWidget(self.printer_combo)
+
+        self.detect_printers_button = QPushButton("프린터 인식")
+        self.detect_printers_button.clicked.connect(self.refresh_printers)
+        printer_layout.addWidget(self.detect_printers_button)
+        printer_layout.addStretch()
+        layout.addLayout(printer_layout)
+
+        self.printer_note = QLabel(
+            "프린터 방식은 PDF 가상 프린터 전용입니다. "
+            "드라이버 특성에 따라 텍스트 검색이 지원되지 않을 수 있습니다."
+        )
+        self.printer_note.setStyleSheet("color: #9a5b00;")
+        layout.addWidget(self.printer_note)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -130,6 +182,51 @@ class MainWindow(QMainWindow):
         self.output_edit.setText(self.settings.output_directory)
         self.quality_combo.setCurrentText(self.settings.quality)
         self.color_combo.setCurrentText(self.settings.color_mode)
+        method_index = self.output_method_combo.findData(
+            self.settings.use_pdf_printer
+        )
+        if method_index >= 0:
+            self.output_method_combo.setCurrentIndex(method_index)
+        if self.settings.printer_name:
+            self.printer_combo.addItem(self.settings.printer_name)
+            self.printer_combo.setCurrentText(self.settings.printer_name)
+        self._update_quality_description(self.quality_combo.currentText())
+        self._update_printer_controls()
+
+    def _update_quality_description(self, quality: str) -> None:
+        descriptions = (
+            PRINTER_QUALITY_DESCRIPTIONS
+            if bool(self.output_method_combo.currentData())
+            else QUALITY_DESCRIPTIONS
+        )
+        self.quality_description.setText(descriptions.get(quality, ""))
+
+    def _update_printer_controls(self, _index: int | None = None) -> None:
+        use_printer = bool(self.output_method_combo.currentData())
+        self.printer_combo.setEnabled(use_printer)
+        self.printer_note.setVisible(use_printer)
+        self._update_quality_description(self.quality_combo.currentText())
+
+    def refresh_printers(self) -> None:
+        current_name = self.printer_combo.currentText().strip()
+        printer_names = list_installed_printers()
+        self.printer_combo.clear()
+        self.printer_combo.addItems(printer_names)
+        if current_name in printer_names:
+            self.printer_combo.setCurrentText(current_name)
+        elif self.settings.printer_name in printer_names:
+            self.printer_combo.setCurrentText(self.settings.printer_name)
+
+        if printer_names:
+            self.statusBar().showMessage(
+                f"설치된 프린터 {len(printer_names)}개를 인식했습니다."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "프린터 인식",
+                "Windows에 설치된 프린터를 찾지 못했습니다.",
+            )
 
     def add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "변환할 파일 선택")
@@ -207,6 +304,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "확인", "PDF 저장 폴더를 선택해주세요.")
             return
 
+        use_pdf_printer = bool(self.output_method_combo.currentData())
+        printer_name = self.printer_combo.currentText().strip()
+        if use_pdf_printer and not printer_name:
+            QMessageBox.warning(
+                self,
+                "프린터 확인",
+                "프린터 인식 버튼을 누르고 PDF 가상 프린터를 선택해주세요.",
+            )
+            return
+        if use_pdf_printer:
+            answer = QMessageBox.question(
+                self,
+                "PDF 프린터 확인",
+                f"선택한 프린터: {printer_name}\n\n"
+                "PDF 가상 프린터가 맞는지 확인해주세요. "
+                "종이 프린터를 선택하면 실제 인쇄될 수 있습니다.\n\n"
+                "이 프린터로 계속하시겠습니까?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
         output_directory = Path(output_text)
         try:
             output_directory.mkdir(parents=True, exist_ok=True)
@@ -226,6 +346,7 @@ class MainWindow(QMainWindow):
             output_directory,
             self.quality_combo.currentText(),
             self.color_combo.currentText(),
+            printer_name if use_pdf_printer else "",
         )
         self.conversion_worker.moveToThread(self.conversion_thread)
         self.conversion_thread.started.connect(self.conversion_worker.run)
@@ -316,8 +437,15 @@ class MainWindow(QMainWindow):
             button.setEnabled(enabled)
         self.table.setEnabled(enabled)
         self.output_edit.setEnabled(enabled)
+        self.output_browse_button.setEnabled(enabled)
         self.quality_combo.setEnabled(enabled)
         self.color_combo.setEnabled(enabled)
+        self.output_method_combo.setEnabled(enabled)
+        self.detect_printers_button.setEnabled(enabled)
+        if enabled:
+            self._update_printer_controls()
+        else:
+            self.printer_combo.setEnabled(False)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -345,6 +473,8 @@ class MainWindow(QMainWindow):
                 quality=self.quality_combo.currentText(),
                 color_mode=self.color_combo.currentText(),
                 include_subfolders=True,
+                use_pdf_printer=bool(self.output_method_combo.currentData()),
+                printer_name=self.printer_combo.currentText().strip(),
             )
         )
         event.accept()

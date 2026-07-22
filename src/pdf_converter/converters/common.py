@@ -15,6 +15,20 @@ class PageRangeError(ValueError):
     pass
 
 
+IMAGE_COMPRESSION_SETTINGS = {
+    "최소용량": {
+        "dpi_threshold": 180,
+        "dpi_target": 120,
+        "quality": 70,
+    },
+    "일반": {
+        "dpi_threshold": 360,
+        "dpi_target": 220,
+        "quality": 85,
+    },
+}
+
+
 def parse_page_range(expression: str, page_count: int) -> list[int]:
     """Return zero-based page indexes for a Korean-style page-range expression."""
     normalized = expression.strip().lower()
@@ -66,7 +80,8 @@ def finalize_exported_pdf(
 
     needs_page_selection = len(selected_pages) != len(reader.pages)
     needs_grayscale = options.color_mode == "흑백"
-    needs_image_compression = options.quality == "최소용량"
+    compression_settings = IMAGE_COMPRESSION_SETTINGS.get(options.quality)
+    needs_image_compression = compression_settings is not None
 
     if not needs_page_selection and not needs_grayscale and not needs_image_compression:
         shutil.move(str(exported_pdf), target)
@@ -78,10 +93,6 @@ def finalize_exported_pdf(
         if needs_grayscale:
             document.recolor(components=1)
         if needs_image_compression:
-            document.rewrite_images(
-                dpi_threshold=180,
-                dpi_target=120,
-                quality=70,
-            )
+            document.rewrite_images(**compression_settings)
         document.save(target, garbage=4, deflate=True)
     return target

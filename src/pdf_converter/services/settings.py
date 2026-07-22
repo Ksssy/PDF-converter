@@ -11,6 +11,8 @@ class AppSettings:
     quality: str = "일반"
     color_mode: str = "컬러"
     include_subfolders: bool = True
+    use_pdf_printer: bool = False
+    printer_name: str = ""
 
 
 class SettingsService:

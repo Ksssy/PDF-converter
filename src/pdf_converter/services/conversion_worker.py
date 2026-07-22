@@ -9,6 +9,7 @@ from pdf_converter.converters import create_default_registry
 from pdf_converter.converters.base import ConversionOptions
 from pdf_converter.core.models import ConversionItem
 from pdf_converter.services.logging_service import LoggingService
+from pdf_converter.services.printer_service import print_pdf_with_printer
 
 
 class ConversionWorker(QObject):
@@ -25,12 +26,14 @@ class ConversionWorker(QObject):
         output_directory: Path,
         quality: str,
         color_mode: str,
+        printer_name: str = "",
     ) -> None:
         super().__init__()
         self.items = items
         self.output_directory = output_directory
         self.quality = quality
         self.color_mode = color_mode
+        self.printer_name = printer_name
         self._pause_event = Event()
         self._stop_event = Event()
 
@@ -75,6 +78,12 @@ class ConversionWorker(QObject):
                         color_mode=self.color_mode,
                     ),
                 )
+                if self.printer_name:
+                    output_path = print_pdf_with_printer(
+                        output_path,
+                        self.printer_name,
+                        self.quality,
+                    )
             except Exception as error:
                 failure_count += 1
                 message = str(error)
