@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pdf_converter.core.models import ConversionItem
+from pdf_converter.core.models import ConversionItem, ExcelValidationIssue
 from pdf_converter.services import conversion_worker as worker_module
 from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.pdf_validation import PdfValidationReport
@@ -61,3 +61,63 @@ def test_worker_only_validates_files_with_enabled_checkbox(
     assert validation_calls == [tmp_path / "checked.pdf"]
     assert checked.validation_checked
     assert not unchecked.validation_checked
+
+
+def test_worker_inspects_source_excel_and_records_cell_locations(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    operation_order: list[str] = []
+
+    class FakeConverter:
+        def convert(self, source: Path, _options) -> Path:
+            operation_order.append(f"convert:{source.name}")
+            return tmp_path / f"{source.stem}.pdf"
+
+    class FakeRegistry:
+        def resolve(self, _source: Path) -> FakeConverter:
+            return FakeConverter()
+
+    class FakeLoggingService:
+        def write(self, _message: str) -> Path:
+            return tmp_path / "conversion.txt"
+
+    def fake_excel_inspect(source: Path) -> list[ExcelValidationIssue]:
+        operation_order.append(f"excel:{source.name}")
+        return [
+            ExcelValidationIssue(
+                sheet_name="수량",
+                row=8,
+                column=3,
+                column_name="C",
+                address="C8",
+                label="#N/A",
+            )
+        ]
+
+    monkeypatch.setattr(
+        worker_module,
+        "create_default_registry",
+        lambda: FakeRegistry(),
+    )
+    monkeypatch.setattr(worker_module, "LoggingService", FakeLoggingService)
+    monkeypatch.setattr(
+        worker_module,
+        "inspect_excel_for_errors",
+        fake_excel_inspect,
+    )
+
+    item = ConversionItem(tmp_path / "quantity.xlsx")
+    worker = ConversionWorker(
+        [item],
+        tmp_path,
+        "일반",
+        "컬러",
+        validate_excel_errors=True,
+    )
+
+    worker.run()
+
+    assert operation_order == ["excel:quantity.xlsx", "convert:quantity.xlsx"]
+    assert item.validation_checked
+    assert item.validation_summary == "엑셀 [수량] 8행 C열(C8): #N/A"

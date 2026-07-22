@@ -41,7 +41,8 @@ class ResultDialog(QDialog):
 
         layout = QVBoxLayout(self)
         validation_file_count = sum(
-            bool(item.validation_issues) for item in items
+            bool(item.validation_issues or item.excel_validation_issues)
+            for item in items
         )
         validation_issue_count = sum(
             item.validation_issue_count for item in items
@@ -49,7 +50,7 @@ class ResultDialog(QDialog):
         validation_summary = ""
         if any(item.validation_checked for item in items):
             validation_summary = (
-                f"  |  PDF 오류 발견 {validation_file_count}개 파일, "
+                f"  |  오류 발견 {validation_file_count}개 파일, "
                 f"{validation_issue_count}건"
             )
         self.summary_label = QLabel(
@@ -68,7 +69,7 @@ class ResultDialog(QDialog):
                 "원본 파일",
                 "페이지 범위",
                 "저장 파일",
-                "PDF 오류 검사",
+                "오류 검사 결과",
                 "변환 오류",
             ]
         )
@@ -119,7 +120,9 @@ class ResultDialog(QDialog):
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
-                if column == 4 and item.validation_issues:
+                if column == 4 and (
+                    item.validation_issues or item.excel_validation_issues
+                ):
                     cell.setBackground(QColor("#ffd6d6"))
                     cell.setForeground(QColor("#8b0000"))
                 elif column == 4 and (
@@ -166,7 +169,7 @@ class ResultDialog(QDialog):
 
         menu = QMenu(self)
         menu.addAction("선택 셀 복사", self.copy_current_cell)
-        menu.addAction("PDF 오류 검사 내용 복사", self.copy_validation_result)
+        menu.addAction("오류 검사 내용 복사", self.copy_validation_result)
         menu.addAction("행 전체 복사", self.copy_current_row)
         menu.exec(self.table.viewport().mapToGlobal(position))
 

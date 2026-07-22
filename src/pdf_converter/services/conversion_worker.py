@@ -8,6 +8,10 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from pdf_converter.converters import create_default_registry
 from pdf_converter.converters.base import ConversionOptions
 from pdf_converter.core.models import ConversionItem
+from pdf_converter.services.excel_validation import (
+    inspect_excel_for_errors,
+    is_excel_source,
+)
 from pdf_converter.services.logging_service import LoggingService
 from pdf_converter.services.pdf_validation import inspect_pdf_for_errors
 from pdf_converter.services.printer_service import print_pdf_with_printer
@@ -29,6 +33,7 @@ class ConversionWorker(QObject):
         color_mode: str,
         printer_name: str = "",
         validation_terms: list[str] | None = None,
+        validate_excel_errors: bool = False,
     ) -> None:
         super().__init__()
         self.items = items
@@ -37,6 +42,7 @@ class ConversionWorker(QObject):
         self.color_mode = color_mode
         self.printer_name = printer_name
         self.validation_terms = validation_terms or []
+        self.validate_excel_errors = validate_excel_errors
         self._pause_event = Event()
         self._stop_event = Event()
 
@@ -71,6 +77,28 @@ class ConversionWorker(QObject):
 
             self.item_started.emit(index)
             try:
+                if (
+                    item.validation_enabled
+                    and self.validate_excel_errors
+                    and is_excel_source(item.source_path)
+                ):
+                    item.validation_checked = True
+                    try:
+                        item.excel_validation_issues = (
+                            inspect_excel_for_errors(item.source_path)
+                        )
+                    except Exception as validation_error:
+                        _append_validation_error(item, str(validation_error))
+                        logger.write(
+                            f"Excel 원본 오류 검사 실패 | "
+                            f"{item.source_path} | {validation_error}"
+                        )
+                    else:
+                        logger.write(
+                            f"Excel 원본 오류 검사 | {item.source_path} | "
+                            f"{item.validation_summary}"
+                        )
+
                 converter = registry.resolve(item.source_path)
                 output_path = converter.convert(
                     item.source_path,
@@ -89,7 +117,7 @@ class ConversionWorker(QObject):
                             self.validation_terms,
                         )
                     except Exception as validation_error:
-                        item.validation_error = str(validation_error)
+                        _append_validation_error(item, str(validation_error))
                         logger.write(
                             f"PDF 오류 검사 실패 | {item.source_path} | "
                             f"{validation_error}"
@@ -134,3 +162,10 @@ class ConversionWorker(QObject):
             skipped_count,
             str(log_path),
         )
+
+
+def _append_validation_error(item: ConversionItem, message: str) -> None:
+    if item.validation_error:
+        item.validation_error = f"{item.validation_error} | {message}"
+    else:
+        item.validation_error = message

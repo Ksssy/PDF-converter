@@ -12,14 +12,6 @@ from pdf_converter.core.models import PdfValidationIssue
 NG_RULE_LABEL = "NG / N.G"
 HASH_RULE_LABEL = "##"
 QUESTION_RULE_LABEL = "??"
-EXCEL_HASH_RULE_LABEL = "엑셀 ##### 오류"
-EXCEL_ERROR_TERMS = (
-    EXCEL_HASH_RULE_LABEL,
-    "#N/A",
-    "#DIV/0!",
-    "#NAME?",
-    "#VALUE!",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +25,6 @@ def build_validation_terms(
     check_hashes: bool,
     check_questions: bool,
     custom_terms: str = "",
-    check_excel_errors: bool = False,
 ) -> list[str]:
     terms: list[str] = []
     if check_ng:
@@ -42,8 +33,6 @@ def build_validation_terms(
         terms.append(HASH_RULE_LABEL)
     if check_questions:
         terms.append(QUESTION_RULE_LABEL)
-    if check_excel_errors:
-        terms.extend(EXCEL_ERROR_TERMS)
 
     terms.extend(
         term.strip()
@@ -99,6 +88,4 @@ def _compile_term(term: str) -> re.Pattern[str]:
         )
     if term == HASH_RULE_LABEL:
         return re.compile(r"(?<!#)##(?!#)")
-    if term == EXCEL_HASH_RULE_LABEL:
-        return re.compile(r"#{3,}")
     return re.compile(re.escape(term), re.IGNORECASE)

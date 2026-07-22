@@ -28,6 +28,7 @@ from pdf_converter import __version__
 from pdf_converter.core.models import ConversionItem, ConversionStatus
 from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
+from pdf_converter.services.excel_validation import EXCEL_ERROR_HELP_TEXT
 from pdf_converter.services.file_scanner import is_supported, scan_folder
 from pdf_converter.services.pdf_validation import build_validation_terms
 from pdf_converter.services.printer_service import (
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         self.conversion_thread: QThread | None = None
         self.conversion_worker: ConversionWorker | None = None
         self.is_paused = False
+        self.last_browse_directory = Path.home()
 
         self._build_ui()
         self._restore_settings()
@@ -115,7 +117,7 @@ class MainWindow(QMainWindow):
                 "파일형식",
                 "페이지 범위",
                 "상태",
-                "PDF 오류 검사",
+                "오류 검사 결과",
                 "원본 경로",
             ]
         )
@@ -221,9 +223,7 @@ class MainWindow(QMainWindow):
         self.validate_hashes_checkbox = QCheckBox("##")
         self.validate_questions_checkbox = QCheckBox("??")
         self.validate_excel_errors_checkbox = QCheckBox("엑셀 주요 오류")
-        self.validate_excel_errors_checkbox.setToolTip(
-            "##### · #N/A · #DIV/0! · #NAME? · #VALUE! 오류를 검사합니다."
-        )
+        self.validate_excel_errors_checkbox.setToolTip(EXCEL_ERROR_HELP_TEXT)
         validation_layout.addWidget(self.validate_ng_checkbox)
         validation_layout.addWidget(self.validate_hashes_checkbox)
         validation_layout.addWidget(self.validate_questions_checkbox)
@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
         validation_layout.addWidget(QLabel("직접 입력"))
         self.custom_validation_edit = QLineEdit()
         self.custom_validation_edit.setPlaceholderText(
-            "쉼표로 구분: #VALUE!, #DIV/0!, ERROR"
+            "쉼표로 구분: ERROR, WARNING, 미검토"
         )
         self.custom_validation_edit.setToolTip(
             "추가로 찾을 문구를 쉼표, 세미콜론 또는 줄바꿈으로 구분하세요."
@@ -240,8 +240,14 @@ class MainWindow(QMainWindow):
         validation_layout.addWidget(self.custom_validation_edit)
         layout.addLayout(validation_layout)
 
+        self.excel_error_help = QLabel(EXCEL_ERROR_HELP_TEXT)
+        self.excel_error_help.setWordWrap(True)
+        self.excel_error_help.setStyleSheet("color: #7a3e00;")
+        layout.addWidget(self.excel_error_help)
+
         self.validation_note = QLabel(
-            "체크된 파일에 대해 선택된 오류 항목만 페이지별로 검사합니다. "
+            "엑셀 주요 오류는 원본 Excel의 시트·행·열을 검사합니다. "
+            "나머지 오류 항목은 PDF 페이지별로 검사합니다. "
             "프린터 사용 시에는 텍스트가 그림으로 바뀌기 전에 검사합니다."
         )
         self.validation_note.setStyleSheet("color: #555;")
@@ -360,13 +366,25 @@ class MainWindow(QMainWindow):
             )
 
     def add_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "변환할 파일 선택")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "변환할 파일 선택",
+            str(self.last_browse_directory),
+        )
+        if paths:
+            self.last_browse_directory = Path(paths[0]).parent
         self._add_paths(Path(path) for path in paths)
 
     def add_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "폴더 선택",
+            str(self.last_browse_directory),
+        )
         if folder:
-            self._add_paths(scan_folder(Path(folder), recursive=True))
+            selected_folder = Path(folder)
+            self.last_browse_directory = selected_folder
+            self._add_paths(scan_folder(selected_folder, recursive=True))
 
     def _add_paths(self, paths) -> None:
         existing = {item.source_path.resolve() for item in self.items}
@@ -591,6 +609,7 @@ class MainWindow(QMainWindow):
             item.error = ""
             item.validation_checked = False
             item.validation_issues.clear()
+            item.excel_validation_issues.clear()
             item.validation_unsearchable_pages.clear()
             item.validation_error = ""
         self._refresh_table()
@@ -600,9 +619,6 @@ class MainWindow(QMainWindow):
             self.validate_hashes_checkbox.isChecked(),
             self.validate_questions_checkbox.isChecked(),
             self.custom_validation_edit.text(),
-            check_excel_errors=(
-                self.validate_excel_errors_checkbox.isChecked()
-            ),
         )
 
         self.conversion_thread = QThread(self)
@@ -613,6 +629,7 @@ class MainWindow(QMainWindow):
             self.color_combo.currentText(),
             printer_name if use_pdf_printer else "",
             validation_terms,
+            self.validate_excel_errors_checkbox.isChecked(),
         )
         self.conversion_worker.moveToThread(self.conversion_thread)
         self.conversion_thread.started.connect(self.conversion_worker.run)

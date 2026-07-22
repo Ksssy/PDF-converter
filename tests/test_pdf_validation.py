@@ -4,8 +4,6 @@ import pymupdf
 
 from pdf_converter.core.models import ConversionItem
 from pdf_converter.services.pdf_validation import (
-    EXCEL_ERROR_TERMS,
-    EXCEL_HASH_RULE_LABEL,
     HASH_RULE_LABEL,
     NG_RULE_LABEL,
     QUESTION_RULE_LABEL,
@@ -23,38 +21,6 @@ def test_build_validation_terms_only_includes_selected_and_custom() -> None:
     )
 
     assert terms == [NG_RULE_LABEL, QUESTION_RULE_LABEL, "#VALUE!", "ERROR"]
-
-
-def test_excel_error_option_adds_attached_major_errors() -> None:
-    terms = build_validation_terms(
-        check_ng=False,
-        check_hashes=False,
-        check_questions=False,
-        check_excel_errors=True,
-    )
-
-    assert terms == list(EXCEL_ERROR_TERMS)
-
-
-def test_pdf_validation_reports_excel_errors(tmp_path: Path) -> None:
-    pdf_path = tmp_path / "excel-errors.pdf"
-    with pymupdf.open() as document:
-        page = document.new_page()
-        page.insert_text(
-            (72, 72),
-            "#######  #N/A  #DIV/0!  #NAME?  #VALUE!",
-        )
-        document.save(pdf_path)
-
-    report = inspect_pdf_for_errors(pdf_path, list(EXCEL_ERROR_TERMS))
-
-    assert [(issue.label, issue.count) for issue in report.issues] == [
-        (EXCEL_HASH_RULE_LABEL, 1),
-        ("#N/A", 1),
-        ("#DIV/0!", 1),
-        ("#NAME?", 1),
-        ("#VALUE!", 1),
-    ]
 
 
 def test_pdf_validation_reports_errors_by_page(tmp_path: Path) -> None:
