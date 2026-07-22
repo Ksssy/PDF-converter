@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-converter"
-version = "0.2.0"
+version = "0.3.0"
 description = "Windows batch PDF converter for HWP, Excel, Word, and PowerPoint"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,7 @@ dependencies = [
   "PySide6>=6.7,<7",
   "pywin32>=306; platform_system == 'Windows'",
   "pypdf>=5,<6",
+  "PyMuPDF>=1.28,<2",
 ]
 
 [project.optional-dependencies]

@@ -13,9 +13,6 @@ class PowerPointConverter(BaseConverter):
     supported_extensions = frozenset({".ppt", ".pptx", ".pptm", ".pps", ".ppsx"})
 
     def convert(self, source: Path, options: ConversionOptions) -> Path:
-        if options.color_mode == "흑백":
-            raise RuntimeError("PowerPoint 흑백 PDF 변환은 아직 지원하지 않습니다.")
-
         def export(target: Path) -> None:
             pythoncom.CoInitialize()
             application = None

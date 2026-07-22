@@ -4,7 +4,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pypdf import PdfReader, PdfWriter
+import pymupdf
+from pypdf import PdfReader
 
 if TYPE_CHECKING:
     from pdf_converter.converters.base import ConversionOptions
@@ -63,13 +64,24 @@ def finalize_exported_pdf(
     reader = PdfReader(str(exported_pdf))
     selected_pages = parse_page_range(options.page_range, len(reader.pages))
 
-    if len(selected_pages) == len(reader.pages):
+    needs_page_selection = len(selected_pages) != len(reader.pages)
+    needs_grayscale = options.color_mode == "흑백"
+    needs_image_compression = options.quality == "최소용량"
+
+    if not needs_page_selection and not needs_grayscale and not needs_image_compression:
         shutil.move(str(exported_pdf), target)
         return target
 
-    writer = PdfWriter()
-    for page_index in selected_pages:
-        writer.add_page(reader.pages[page_index])
-    with target.open("wb") as output_stream:
-        writer.write(output_stream)
+    with pymupdf.open(exported_pdf) as document:
+        if needs_page_selection:
+            document.select(selected_pages)
+        if needs_grayscale:
+            document.recolor(components=1)
+        if needs_image_compression:
+            document.rewrite_images(
+                dpi_threshold=180,
+                dpi_target=120,
+                quality=70,
+            )
+        document.save(target, garbage=4, deflate=True)
     return target

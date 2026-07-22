@@ -30,9 +30,6 @@ class ExcelConverter(BaseConverter):
                     IgnoreReadOnlyRecommended=True,
                     AddToMru=False,
                 )
-                if options.color_mode == "흑백":
-                    for worksheet in workbook.Worksheets:
-                        worksheet.PageSetup.BlackAndWhite = True
                 workbook.ExportAsFixedFormat(
                     Type=0,
                     Filename=str(target),

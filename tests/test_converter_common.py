@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pymupdf
 import pytest
 from pypdf import PdfReader, PdfWriter
 
@@ -57,3 +58,34 @@ def test_finalize_exported_pdf_applies_page_range(tmp_path: Path) -> None:
 
     assert result == output_directory / "보고서.pdf"
     assert len(PdfReader(str(result)).pages) == 2
+
+
+def test_finalize_exported_pdf_converts_to_searchable_grayscale(tmp_path: Path) -> None:
+    exported = tmp_path / "color.pdf"
+    with pymupdf.open() as document:
+        page = document.new_page(width=200, height=200)
+        page.draw_rect(
+            pymupdf.Rect(20, 20, 180, 180),
+            color=(1, 0, 0),
+            fill=(0, 0, 1),
+        )
+        page.insert_text((40, 100), "searchable text", color=(0, 1, 0))
+        document.save(exported)
+
+    output_directory = tmp_path / "output"
+    output_directory.mkdir()
+    result = finalize_exported_pdf(
+        exported,
+        tmp_path / "색상문서.docx",
+        ConversionOptions(output_directory=output_directory, color_mode="흑백"),
+    )
+
+    with pymupdf.open(result) as grayscale_document:
+        page = grayscale_document[0]
+        assert "searchable text" in page.get_text()
+        pixmap = page.get_pixmap(colorspace=pymupdf.csRGB, alpha=False)
+        samples = pixmap.samples
+        assert all(
+            samples[index] == samples[index + 1] == samples[index + 2]
+            for index in range(0, len(samples), 3)
+        )
