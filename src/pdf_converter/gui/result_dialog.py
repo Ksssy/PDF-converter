@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QPoint, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -73,6 +75,12 @@ class ResultDialog(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
+        self.table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.table.customContextMenuRequested.connect(
+            self._show_table_context_menu
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
             0,
@@ -149,3 +157,37 @@ class ResultDialog(QDialog):
 
     def open_log(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.log_path)))
+
+    def _show_table_context_menu(self, position: QPoint) -> None:
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        self.table.setCurrentCell(index.row(), index.column())
+
+        menu = QMenu(self)
+        menu.addAction("선택 셀 복사", self.copy_current_cell)
+        menu.addAction("PDF 오류 검사 내용 복사", self.copy_validation_result)
+        menu.addAction("행 전체 복사", self.copy_current_row)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def copy_current_cell(self) -> None:
+        cell = self.table.currentItem()
+        if cell is not None:
+            QApplication.clipboard().setText(cell.text())
+
+    def copy_validation_result(self) -> None:
+        row = self.table.currentRow()
+        cell = self.table.item(row, 4) if row >= 0 else None
+        if cell is not None:
+            QApplication.clipboard().setText(cell.text())
+
+    def copy_current_row(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        values = [
+            self.table.item(row, column).text()
+            for column in range(self.table.columnCount())
+            if self.table.item(row, column) is not None
+        ]
+        QApplication.clipboard().setText("\t".join(values))

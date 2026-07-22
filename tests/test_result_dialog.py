@@ -46,6 +46,9 @@ def test_result_dialog_lists_success_and_failure(tmp_path: Path) -> None:
     assert dialog.table.item(0, 4).text() == "2페이지: NG / N.G 1건"
     assert dialog.table.item(1, 5).text() == "변환 오류"
     assert "PDF 오류 발견 1개 파일, 1건" in dialog.summary_label.text()
+    dialog.table.setCurrentCell(0, 4)
+    dialog.copy_validation_result()
+    assert QApplication.clipboard().text() == "2페이지: NG / N.G 1건"
     assert dialog.output_button.isEnabled()
     assert dialog.log_button.isEnabled()
     dialog.close()

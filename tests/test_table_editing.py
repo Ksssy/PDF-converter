@@ -1,10 +1,12 @@
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from pdf_converter.gui.main_window import (
     COL_FILENAME,
     COL_SOURCE_PATH,
+    COL_VALIDATION_ENABLED,
     MainWindow,
 )
 
@@ -21,6 +23,12 @@ def test_table_allows_filename_path_editing_and_copy(
     window = MainWindow()
     window.settings_service.path = tmp_path / "settings.json"
     window._add_paths([source])
+
+    assert window.items[0].validation_enabled
+    window.table.item(0, COL_VALIDATION_ENABLED).setCheckState(
+        Qt.CheckState.Unchecked
+    )
+    assert not window.items[0].validation_enabled
 
     window.table.item(0, COL_FILENAME).setText("renamed.xlsx")
     assert window.items[0].source_path == tmp_path / "renamed.xlsx"

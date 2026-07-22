@@ -50,12 +50,13 @@ PRINTER_QUALITY_DESCRIPTIONS = {
 }
 
 COL_NUMBER = 0
-COL_FILENAME = 1
-COL_EXTENSION = 2
-COL_PAGE_RANGE = 3
-COL_STATUS = 4
-COL_VALIDATION = 5
-COL_SOURCE_PATH = 6
+COL_VALIDATION_ENABLED = 1
+COL_FILENAME = 2
+COL_EXTENSION = 3
+COL_PAGE_RANGE = 4
+COL_STATUS = 5
+COL_VALIDATION = 6
+COL_SOURCE_PATH = 7
 EDITABLE_COLUMNS = {COL_FILENAME, COL_PAGE_RANGE, COL_SOURCE_PATH}
 
 
@@ -99,16 +100,17 @@ class MainWindow(QMainWindow):
         layout.addLayout(toolbar)
 
         table_help = QLabel(
-            "파일명·페이지 범위·원본 경로는 더블클릭하거나 바로 입력해 "
-            "수정할 수 있습니다. 우클릭하면 복사 메뉴가 열립니다."
+            "파일별 오류 검사 체크박스를 선택하고, 파일명·페이지 범위·"
+            "원본 경로는 직접 수정할 수 있습니다. 우클릭하면 복사 메뉴가 열립니다."
         )
         table_help.setStyleSheet("color: #555;")
         layout.addWidget(table_help)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             [
                 "순번",
+                "오류 검사",
                 "파일명",
                 "파일형식",
                 "페이지 범위",
@@ -133,7 +135,8 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnWidth(COL_NUMBER, 55)
-        self.table.setColumnWidth(COL_FILENAME, 230)
+        self.table.setColumnWidth(COL_VALIDATION_ENABLED, 85)
+        self.table.setColumnWidth(COL_FILENAME, 210)
         self.table.setColumnWidth(COL_EXTENSION, 80)
         self.table.setColumnWidth(COL_PAGE_RANGE, 120)
         self.table.setColumnWidth(COL_STATUS, 90)
@@ -217,9 +220,14 @@ class MainWindow(QMainWindow):
         self.validate_ng_checkbox = QCheckBox("NG / N.G")
         self.validate_hashes_checkbox = QCheckBox("##")
         self.validate_questions_checkbox = QCheckBox("??")
+        self.validate_excel_errors_checkbox = QCheckBox("엑셀 주요 오류")
+        self.validate_excel_errors_checkbox.setToolTip(
+            "##### · #N/A · #DIV/0! · #NAME? · #VALUE! 오류를 검사합니다."
+        )
         validation_layout.addWidget(self.validate_ng_checkbox)
         validation_layout.addWidget(self.validate_hashes_checkbox)
         validation_layout.addWidget(self.validate_questions_checkbox)
+        validation_layout.addWidget(self.validate_excel_errors_checkbox)
         validation_layout.addSpacing(15)
         validation_layout.addWidget(QLabel("직접 입력"))
         self.custom_validation_edit = QLineEdit()
@@ -233,7 +241,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(validation_layout)
 
         self.validation_note = QLabel(
-            "선택된 항목만 최종 PDF의 페이지별로 검사합니다. "
+            "체크된 파일에 대해 선택된 오류 항목만 페이지별로 검사합니다. "
             "프린터 사용 시에는 텍스트가 그림으로 바뀌기 전에 검사합니다."
         )
         self.validation_note.setStyleSheet("color: #555;")
@@ -279,6 +287,9 @@ class MainWindow(QMainWindow):
         self.validate_hashes_checkbox.setChecked(self.settings.validate_hashes)
         self.validate_questions_checkbox.setChecked(
             self.settings.validate_questions
+        )
+        self.validate_excel_errors_checkbox.setChecked(
+            self.settings.validate_excel_errors
         )
         self.custom_validation_edit.setText(
             self.settings.custom_validation_terms
@@ -373,6 +384,7 @@ class MainWindow(QMainWindow):
             for row, item in enumerate(self.items):
                 values = [
                     str(row + 1),
+                    "",
                     item.filename,
                     item.extension,
                     item.page_range,
@@ -382,7 +394,23 @@ class MainWindow(QMainWindow):
                 ]
                 for column, value in enumerate(values):
                     cell = QTableWidgetItem(value)
-                    if column not in EDITABLE_COLUMNS:
+                    if column == COL_VALIDATION_ENABLED:
+                        cell.setFlags(
+                            (cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                            & ~Qt.ItemFlag.ItemIsEditable
+                        )
+                        cell.setCheckState(
+                            Qt.CheckState.Checked
+                            if item.validation_enabled
+                            else Qt.CheckState.Unchecked
+                        )
+                        cell.setTextAlignment(
+                            Qt.AlignmentFlag.AlignCenter
+                        )
+                        cell.setToolTip(
+                            "체크된 파일만 PDF 오류 검사를 수행합니다."
+                        )
+                    elif column not in EDITABLE_COLUMNS:
                         cell.setFlags(
                             cell.flags() & ~Qt.ItemFlag.ItemIsEditable
                         )
@@ -406,10 +434,18 @@ class MainWindow(QMainWindow):
     def _on_table_item_changed(self, cell: QTableWidgetItem) -> None:
         row = cell.row()
         column = cell.column()
-        if not (0 <= row < len(self.items)) or column not in EDITABLE_COLUMNS:
+        if not (0 <= row < len(self.items)):
             return
 
         item = self.items[row]
+        if column == COL_VALIDATION_ENABLED:
+            item.validation_enabled = (
+                cell.checkState() == Qt.CheckState.Checked
+            )
+            return
+        if column not in EDITABLE_COLUMNS:
+            return
+
         value = cell.text().strip()
         if column == COL_PAGE_RANGE:
             item.page_range = value or "전체"
@@ -564,6 +600,9 @@ class MainWindow(QMainWindow):
             self.validate_hashes_checkbox.isChecked(),
             self.validate_questions_checkbox.isChecked(),
             self.custom_validation_edit.text(),
+            check_excel_errors=(
+                self.validate_excel_errors_checkbox.isChecked()
+            ),
         )
 
         self.conversion_thread = QThread(self)
@@ -673,6 +712,7 @@ class MainWindow(QMainWindow):
         self.validate_ng_checkbox.setEnabled(enabled)
         self.validate_hashes_checkbox.setEnabled(enabled)
         self.validate_questions_checkbox.setEnabled(enabled)
+        self.validate_excel_errors_checkbox.setEnabled(enabled)
         self.custom_validation_edit.setEnabled(enabled)
         if enabled:
             self._update_printer_controls()
@@ -711,6 +751,9 @@ class MainWindow(QMainWindow):
                 validate_ng=self.validate_ng_checkbox.isChecked(),
                 validate_hashes=self.validate_hashes_checkbox.isChecked(),
                 validate_questions=self.validate_questions_checkbox.isChecked(),
+                validate_excel_errors=(
+                    self.validate_excel_errors_checkbox.isChecked()
+                ),
                 custom_validation_terms=self.custom_validation_edit.text(),
             )
         )

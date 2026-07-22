@@ -24,6 +24,7 @@ class PdfValidationIssue:
 class ConversionItem:
     source_path: Path
     page_range: str = "전체"
+    validation_enabled: bool = True
     status: ConversionStatus = ConversionStatus.WAITING
     output_path: Path | None = None
     error: str = ""

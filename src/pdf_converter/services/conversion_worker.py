@@ -81,7 +81,7 @@ class ConversionWorker(QObject):
                         color_mode=self.color_mode,
                     ),
                 )
-                if self.validation_terms:
+                if item.validation_enabled and self.validation_terms:
                     item.validation_checked = True
                     try:
                         report = inspect_pdf_for_errors(

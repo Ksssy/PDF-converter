@@ -16,6 +16,7 @@ class AppSettings:
     validate_ng: bool = True
     validate_hashes: bool = True
     validate_questions: bool = True
+    validate_excel_errors: bool = True
     custom_validation_terms: str = ""
 
 

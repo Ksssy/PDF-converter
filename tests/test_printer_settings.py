@@ -23,6 +23,7 @@ def test_settings_round_trip_printer_selection(tmp_path: Path) -> None:
     expected = AppSettings(
         use_pdf_printer=True,
         printer_name="My PDF Printer",
+        validate_excel_errors=False,
     )
 
     service.save(expected)
