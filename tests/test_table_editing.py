@@ -5,9 +5,10 @@ from PySide6.QtWidgets import QApplication
 
 from pdf_converter.gui import main_window as main_window_module
 from pdf_converter.gui.main_window import (
+    COL_EXCEL_VALIDATION_ENABLED,
     COL_FILENAME,
+    COL_PDF_VALIDATION_ENABLED,
     COL_SOURCE_PATH,
-    COL_VALIDATION_ENABLED,
     MainWindow,
 )
 
@@ -25,11 +26,18 @@ def test_table_allows_filename_path_editing_and_copy(
     window.settings_service.path = tmp_path / "settings.json"
     window._add_paths([source])
 
-    assert window.items[0].validation_enabled
-    window.table.item(0, COL_VALIDATION_ENABLED).setCheckState(
+    assert window.items[0].pdf_validation_enabled
+    assert window.items[0].excel_validation_enabled
+    window.table.item(0, COL_PDF_VALIDATION_ENABLED).setCheckState(
         Qt.CheckState.Unchecked
     )
-    assert not window.items[0].validation_enabled
+    assert not window.items[0].pdf_validation_enabled
+    assert window.items[0].excel_validation_enabled
+
+    window.table.item(0, COL_EXCEL_VALIDATION_ENABLED).setCheckState(
+        Qt.CheckState.Unchecked
+    )
+    assert not window.items[0].excel_validation_enabled
 
     window.table.item(0, COL_FILENAME).setText("renamed.xlsx")
     assert window.items[0].source_path == tmp_path / "renamed.xlsx"
@@ -37,6 +45,9 @@ def test_table_allows_filename_path_editing_and_copy(
     window.table.item(0, COL_SOURCE_PATH).setText(str(replacement))
     assert window.items[0].source_path == replacement
     assert window.table.item(0, COL_FILENAME).text() == "replacement.docx"
+    assert not window.items[0].excel_validation_enabled
+    excel_cell = window.table.item(0, COL_EXCEL_VALIDATION_ENABLED)
+    assert not excel_cell.flags() & Qt.ItemFlag.ItemIsEnabled
 
     window.table.setCurrentCell(0, COL_SOURCE_PATH)
     window.copy_current_source_path()

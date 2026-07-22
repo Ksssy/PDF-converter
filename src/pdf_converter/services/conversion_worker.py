@@ -78,7 +78,7 @@ class ConversionWorker(QObject):
             self.item_started.emit(index)
             try:
                 if (
-                    item.validation_enabled
+                    item.excel_validation_enabled
                     and self.validate_excel_errors
                     and is_excel_source(item.source_path)
                 ):
@@ -109,7 +109,7 @@ class ConversionWorker(QObject):
                         color_mode=self.color_mode,
                     ),
                 )
-                if item.validation_enabled and self.validation_terms:
+                if item.pdf_validation_enabled and self.validation_terms:
                     item.validation_checked = True
                     try:
                         report = inspect_pdf_for_errors(

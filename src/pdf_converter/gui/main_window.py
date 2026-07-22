@@ -28,7 +28,10 @@ from pdf_converter import __version__
 from pdf_converter.core.models import ConversionItem, ConversionStatus
 from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
-from pdf_converter.services.excel_validation import EXCEL_ERROR_HELP_TEXT
+from pdf_converter.services.excel_validation import (
+    EXCEL_ERROR_HELP_TEXT,
+    is_excel_source,
+)
 from pdf_converter.services.file_scanner import is_supported, scan_folder
 from pdf_converter.services.pdf_validation import build_validation_terms
 from pdf_converter.services.printer_service import (
@@ -51,13 +54,14 @@ PRINTER_QUALITY_DESCRIPTIONS = {
 }
 
 COL_NUMBER = 0
-COL_VALIDATION_ENABLED = 1
-COL_FILENAME = 2
-COL_EXTENSION = 3
-COL_PAGE_RANGE = 4
-COL_STATUS = 5
-COL_VALIDATION = 6
-COL_SOURCE_PATH = 7
+COL_PDF_VALIDATION_ENABLED = 1
+COL_EXCEL_VALIDATION_ENABLED = 2
+COL_FILENAME = 3
+COL_EXTENSION = 4
+COL_PAGE_RANGE = 5
+COL_STATUS = 6
+COL_VALIDATION = 7
+COL_SOURCE_PATH = 8
 EDITABLE_COLUMNS = {COL_FILENAME, COL_PAGE_RANGE, COL_SOURCE_PATH}
 
 
@@ -102,17 +106,18 @@ class MainWindow(QMainWindow):
         layout.addLayout(toolbar)
 
         table_help = QLabel(
-            "파일별 오류 검사 체크박스를 선택하고, 파일명·페이지 범위·"
+            "파일별 PDF 검사와 Excel 검사를 각각 선택하고, 파일명·페이지 범위·"
             "원본 경로는 직접 수정할 수 있습니다. 우클릭하면 복사 메뉴가 열립니다."
         )
         table_help.setStyleSheet("color: #555;")
         layout.addWidget(table_help)
 
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels(
             [
                 "순번",
-                "오류 검사",
+                "PDF 검사",
+                "Excel 검사",
                 "파일명",
                 "파일형식",
                 "페이지 범위",
@@ -137,7 +142,8 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setColumnWidth(COL_NUMBER, 55)
-        self.table.setColumnWidth(COL_VALIDATION_ENABLED, 85)
+        self.table.setColumnWidth(COL_PDF_VALIDATION_ENABLED, 80)
+        self.table.setColumnWidth(COL_EXCEL_VALIDATION_ENABLED, 85)
         self.table.setColumnWidth(COL_FILENAME, 210)
         self.table.setColumnWidth(COL_EXTENSION, 80)
         self.table.setColumnWidth(COL_PAGE_RANGE, 120)
@@ -222,12 +228,9 @@ class MainWindow(QMainWindow):
         self.validate_ng_checkbox = QCheckBox("NG / N.G")
         self.validate_hashes_checkbox = QCheckBox("##")
         self.validate_questions_checkbox = QCheckBox("??")
-        self.validate_excel_errors_checkbox = QCheckBox("엑셀 주요 오류")
-        self.validate_excel_errors_checkbox.setToolTip(EXCEL_ERROR_HELP_TEXT)
         validation_layout.addWidget(self.validate_ng_checkbox)
         validation_layout.addWidget(self.validate_hashes_checkbox)
         validation_layout.addWidget(self.validate_questions_checkbox)
-        validation_layout.addWidget(self.validate_excel_errors_checkbox)
         validation_layout.addSpacing(15)
         validation_layout.addWidget(QLabel("직접 입력"))
         self.custom_validation_edit = QLineEdit()
@@ -238,6 +241,11 @@ class MainWindow(QMainWindow):
             "추가로 찾을 문구를 쉼표, 세미콜론 또는 줄바꿈으로 구분하세요."
         )
         validation_layout.addWidget(self.custom_validation_edit)
+        validation_layout.addSpacing(20)
+        validation_layout.addWidget(QLabel("Excel 오류 검사"))
+        self.validate_excel_errors_checkbox = QCheckBox("엑셀 주요 오류")
+        self.validate_excel_errors_checkbox.setToolTip(EXCEL_ERROR_HELP_TEXT)
+        validation_layout.addWidget(self.validate_excel_errors_checkbox)
         layout.addLayout(validation_layout)
 
         self.excel_error_help = QLabel(EXCEL_ERROR_HELP_TEXT)
@@ -246,6 +254,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.excel_error_help)
 
         self.validation_note = QLabel(
+            "파일별 PDF 검사와 Excel 검사를 독립적으로 선택합니다. "
             "엑셀 주요 오류는 원본 Excel의 시트·행·열을 검사합니다. "
             "나머지 오류 항목은 PDF 페이지별로 검사합니다. "
             "프린터 사용 시에는 텍스트가 그림으로 바뀌기 전에 검사합니다."
@@ -391,7 +400,12 @@ class MainWindow(QMainWindow):
         for path in paths:
             path = Path(path)
             if is_supported(path) and path.resolve() not in existing:
-                self.items.append(ConversionItem(path))
+                self.items.append(
+                    ConversionItem(
+                        path,
+                        excel_validation_enabled=is_excel_source(path),
+                    )
+                )
                 existing.add(path.resolve())
         self._refresh_table()
 
@@ -403,6 +417,7 @@ class MainWindow(QMainWindow):
                 values = [
                     str(row + 1),
                     "",
+                    "",
                     item.filename,
                     item.extension,
                     item.page_range,
@@ -412,21 +427,41 @@ class MainWindow(QMainWindow):
                 ]
                 for column, value in enumerate(values):
                     cell = QTableWidgetItem(value)
-                    if column == COL_VALIDATION_ENABLED:
+                    if column == COL_PDF_VALIDATION_ENABLED:
                         cell.setFlags(
                             (cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                             & ~Qt.ItemFlag.ItemIsEditable
                         )
                         cell.setCheckState(
                             Qt.CheckState.Checked
-                            if item.validation_enabled
+                            if item.pdf_validation_enabled
                             else Qt.CheckState.Unchecked
                         )
                         cell.setTextAlignment(
                             Qt.AlignmentFlag.AlignCenter
                         )
                         cell.setToolTip(
-                            "체크된 파일만 PDF 오류 검사를 수행합니다."
+                            "체크하면 선택한 PDF 오류 항목을 이 파일에서 검사합니다."
+                        )
+                    elif column == COL_EXCEL_VALIDATION_ENABLED:
+                        excel_source = is_excel_source(item.source_path)
+                        flags = (
+                            (cell.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                            & ~Qt.ItemFlag.ItemIsEditable
+                        )
+                        if not excel_source:
+                            flags &= ~Qt.ItemFlag.ItemIsEnabled
+                        cell.setFlags(flags)
+                        cell.setCheckState(
+                            Qt.CheckState.Checked
+                            if excel_source and item.excel_validation_enabled
+                            else Qt.CheckState.Unchecked
+                        )
+                        cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        cell.setToolTip(
+                            "체크하면 원본 Excel의 주요 오류를 검사합니다."
+                            if excel_source
+                            else "Excel 파일에서만 사용할 수 있습니다."
                         )
                     elif column not in EDITABLE_COLUMNS:
                         cell.setFlags(
@@ -456,14 +491,21 @@ class MainWindow(QMainWindow):
             return
 
         item = self.items[row]
-        if column == COL_VALIDATION_ENABLED:
-            item.validation_enabled = (
+        if column == COL_PDF_VALIDATION_ENABLED:
+            item.pdf_validation_enabled = (
                 cell.checkState() == Qt.CheckState.Checked
+            )
+            return
+        if column == COL_EXCEL_VALIDATION_ENABLED:
+            item.excel_validation_enabled = (
+                is_excel_source(item.source_path)
+                and cell.checkState() == Qt.CheckState.Checked
             )
             return
         if column not in EDITABLE_COLUMNS:
             return
 
+        previous_is_excel = is_excel_source(item.source_path)
         value = cell.text().strip()
         if column == COL_PAGE_RANGE:
             item.page_range = value or "전체"
@@ -480,6 +522,12 @@ class MainWindow(QMainWindow):
                 item.source_path = Path(value.strip('"'))
         except (OSError, ValueError) as error:
             self.statusBar().showMessage(f"입력값 오류: {error}")
+        else:
+            current_is_excel = is_excel_source(item.source_path)
+            if not current_is_excel:
+                item.excel_validation_enabled = False
+            elif not previous_is_excel:
+                item.excel_validation_enabled = True
         self._refresh_table()
         self.table.selectRow(row)
 
