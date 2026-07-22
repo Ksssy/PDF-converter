@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from pdf_converter import __version__
@@ -13,6 +14,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("PDF변환기")
     app.setApplicationVersion(__version__)
+    app.setFont(QFont("Malgun Gothic", 9))
     window = MainWindow()
     window.show()
     if "--smoke-test" in sys.argv:

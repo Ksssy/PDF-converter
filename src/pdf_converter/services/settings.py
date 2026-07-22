@@ -13,6 +13,10 @@ class AppSettings:
     include_subfolders: bool = True
     use_pdf_printer: bool = False
     printer_name: str = ""
+    validate_ng: bool = True
+    validate_hashes: bool = True
+    validate_questions: bool = True
+    custom_validation_terms: str = ""
 
 
 class SettingsService:

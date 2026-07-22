@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,6 +20,39 @@ PRINT_DPI = {
 
 def list_installed_printers() -> list[str]:
     return sorted(set(QPrinterInfo.availablePrinterNames()), key=str.casefold)
+
+
+def printer_exists(printer_name: str) -> bool:
+    return bool(printer_name) and not QPrinterInfo.printerInfo(printer_name).isNull()
+
+
+def open_printer_properties(printer_name: str) -> None:
+    """Open the selected Windows driver's printing-preferences dialog."""
+    if os.name != "nt":
+        raise RuntimeError("프린터 속성은 Windows에서만 열 수 있습니다.")
+    if not printer_exists(printer_name):
+        raise RuntimeError(
+            f"선택한 프린터가 현재 Windows에 없습니다: {printer_name}. "
+            "프린터 인식 버튼을 다시 눌러주세요."
+        )
+
+    result = subprocess.run(
+        [
+            "rundll32.exe",
+            "printui.dll,PrintUIEntry",
+            "/e",
+            "/n",
+            printer_name,
+        ],
+        check=False,
+        close_fds=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"프린터 속성을 열지 못했습니다: {printer_name} "
+            f"(오류 코드 {result.returncode})"
+        )
 
 
 def _fit_rect(container: QRectF, width: int, height: int) -> QRectF:

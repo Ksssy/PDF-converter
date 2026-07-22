@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -35,20 +35,40 @@ class ResultDialog(QDialog):
         self.log_path = log_path
 
         self.setWindowTitle("변환 결과")
-        self.resize(1050, 560)
+        self.resize(1240, 620)
 
         layout = QVBoxLayout(self)
+        validation_file_count = sum(
+            bool(item.validation_issues) for item in items
+        )
+        validation_issue_count = sum(
+            item.validation_issue_count for item in items
+        )
+        validation_summary = ""
+        if any(item.validation_checked for item in items):
+            validation_summary = (
+                f"  |  PDF 오류 발견 {validation_file_count}개 파일, "
+                f"{validation_issue_count}건"
+            )
         self.summary_label = QLabel(
             f"전체 {len(items)}개  |  "
             f"성공 {success_count}개  |  "
             f"실패 {failure_count}개  |  "
             f"건너뜀 {skipped_count}개"
+            f"{validation_summary}"
         )
         layout.addWidget(self.summary_label)
 
-        self.table = QTableWidget(len(items), 5)
+        self.table = QTableWidget(len(items), 6)
         self.table.setHorizontalHeaderLabels(
-            ["상태", "원본 파일", "페이지 범위", "저장 파일", "오류 내용"]
+            [
+                "상태",
+                "원본 파일",
+                "페이지 범위",
+                "저장 파일",
+                "PDF 오류 검사",
+                "변환 오류",
+            ]
         )
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -74,6 +94,10 @@ class ResultDialog(QDialog):
             4,
             QHeaderView.ResizeMode.Stretch,
         )
+        self.table.horizontalHeader().setSectionResizeMode(
+            5,
+            QHeaderView.ResizeMode.Stretch,
+        )
 
         for row, item in enumerate(items):
             values = (
@@ -81,11 +105,20 @@ class ResultDialog(QDialog):
                 str(item.source_path),
                 item.page_range,
                 str(item.output_path) if item.output_path else "-",
+                item.validation_summary,
                 item.error or "-",
             )
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
+                if column == 4 and item.validation_issues:
+                    cell.setBackground(QColor("#ffd6d6"))
+                    cell.setForeground(QColor("#8b0000"))
+                elif column == 4 and (
+                    item.validation_error
+                    or item.validation_unsearchable_pages
+                ):
+                    cell.setBackground(QColor("#fff0bd"))
                 self.table.setItem(row, column, cell)
         layout.addWidget(self.table)
 

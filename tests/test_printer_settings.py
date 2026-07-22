@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 from pdf_converter.converters.common import IMAGE_COMPRESSION_SETTINGS
 from pdf_converter.gui import main_window as main_window_module
 from pdf_converter.gui.main_window import MainWindow
+from pdf_converter.services import printer_service
 from pdf_converter.services.printer_service import _fit_rect
 from pdf_converter.services.printer_service import print_pdf_with_printer
 from pdf_converter.services.settings import AppSettings, SettingsService
@@ -81,3 +82,28 @@ def test_missing_saved_printer_is_rejected(tmp_path: Path) -> None:
         assert "프린터 인식 버튼을 다시 눌러주세요" in str(error)
     else:
         raise AssertionError("A missing printer must not fall back to the default printer")
+
+
+def test_printer_properties_opens_selected_driver(monkeypatch) -> None:
+    captured: list[str] = []
+
+    def fake_run(command, **_kwargs):
+        captured.extend(command)
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(printer_service, "printer_exists", lambda _name: True)
+    monkeypatch.setattr(printer_service.subprocess, "run", fake_run)
+
+    printer_service.open_printer_properties("Office PDF")
+
+    assert captured == [
+        "rundll32.exe",
+        "printui.dll,PrintUIEntry",
+        "/e",
+        "/n",
+        "Office PDF",
+    ]

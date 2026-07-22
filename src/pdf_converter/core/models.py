@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -13,6 +13,13 @@ class ConversionStatus(StrEnum):
     SKIPPED = "건너뜀"
 
 
+@dataclass(frozen=True, slots=True)
+class PdfValidationIssue:
+    page_number: int
+    label: str
+    count: int
+
+
 @dataclass(slots=True)
 class ConversionItem:
     source_path: Path
@@ -20,6 +27,10 @@ class ConversionItem:
     status: ConversionStatus = ConversionStatus.WAITING
     output_path: Path | None = None
     error: str = ""
+    validation_checked: bool = False
+    validation_issues: list[PdfValidationIssue] = field(default_factory=list)
+    validation_unsearchable_pages: list[int] = field(default_factory=list)
+    validation_error: str = ""
 
     @property
     def filename(self) -> str:
@@ -28,3 +39,48 @@ class ConversionItem:
     @property
     def extension(self) -> str:
         return self.source_path.suffix.lower().lstrip(".").upper()
+
+    @property
+    def validation_issue_count(self) -> int:
+        return sum(issue.count for issue in self.validation_issues)
+
+    @property
+    def validation_summary(self) -> str:
+        if not self.validation_checked:
+            return "검사 안 함"
+        if self.validation_error:
+            return f"검사 실패: {self.validation_error}"
+
+        details: list[str] = []
+        page_numbers = sorted({issue.page_number for issue in self.validation_issues})
+        for page_number in page_numbers:
+            page_issues = [
+                f"{issue.label} {issue.count}건"
+                for issue in self.validation_issues
+                if issue.page_number == page_number
+            ]
+            details.append(f"{page_number}페이지: {', '.join(page_issues)}")
+
+        if not details:
+            details.append("이상 없음")
+        if self.validation_unsearchable_pages:
+            pages = _format_page_numbers(self.validation_unsearchable_pages)
+            details.append(f"텍스트 검색 불가: {pages}페이지")
+        return " | ".join(details)
+
+
+def _format_page_numbers(page_numbers: list[int]) -> str:
+    numbers = sorted(set(page_numbers))
+    if not numbers:
+        return ""
+
+    ranges: list[str] = []
+    start = previous = numbers[0]
+    for number in numbers[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = number
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(ranges)

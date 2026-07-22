@@ -2,7 +2,11 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from pdf_converter.core.models import ConversionItem, ConversionStatus
+from pdf_converter.core.models import (
+    ConversionItem,
+    ConversionStatus,
+    PdfValidationIssue,
+)
 from pdf_converter.gui.result_dialog import ResultDialog
 
 
@@ -17,6 +21,8 @@ def test_result_dialog_lists_success_and_failure(tmp_path: Path) -> None:
         tmp_path / "success.docx",
         status=ConversionStatus.SUCCESS,
         output_path=output_directory / "success.pdf",
+        validation_checked=True,
+        validation_issues=[PdfValidationIssue(2, "NG / N.G", 1)],
     )
     failure = ConversionItem(
         tmp_path / "failure.hwp",
@@ -37,7 +43,9 @@ def test_result_dialog_lists_success_and_failure(tmp_path: Path) -> None:
     assert "실패 1개" in dialog.summary_label.text()
     assert dialog.table.rowCount() == 2
     assert dialog.table.item(0, 3).text().endswith("success.pdf")
-    assert dialog.table.item(1, 4).text() == "변환 오류"
+    assert dialog.table.item(0, 4).text() == "2페이지: NG / N.G 1건"
+    assert dialog.table.item(1, 5).text() == "변환 오류"
+    assert "PDF 오류 발견 1개 파일, 1건" in dialog.summary_label.text()
     assert dialog.output_button.isEnabled()
     assert dialog.log_button.isEnabled()
     dialog.close()

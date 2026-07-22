@@ -9,6 +9,7 @@ from pdf_converter.converters import create_default_registry
 from pdf_converter.converters.base import ConversionOptions
 from pdf_converter.core.models import ConversionItem
 from pdf_converter.services.logging_service import LoggingService
+from pdf_converter.services.pdf_validation import inspect_pdf_for_errors
 from pdf_converter.services.printer_service import print_pdf_with_printer
 
 
@@ -27,6 +28,7 @@ class ConversionWorker(QObject):
         quality: str,
         color_mode: str,
         printer_name: str = "",
+        validation_terms: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.items = items
@@ -34,6 +36,7 @@ class ConversionWorker(QObject):
         self.quality = quality
         self.color_mode = color_mode
         self.printer_name = printer_name
+        self.validation_terms = validation_terms or []
         self._pause_event = Event()
         self._stop_event = Event()
 
@@ -78,6 +81,28 @@ class ConversionWorker(QObject):
                         color_mode=self.color_mode,
                     ),
                 )
+                if self.validation_terms:
+                    item.validation_checked = True
+                    try:
+                        report = inspect_pdf_for_errors(
+                            output_path,
+                            self.validation_terms,
+                        )
+                    except Exception as validation_error:
+                        item.validation_error = str(validation_error)
+                        logger.write(
+                            f"PDF 오류 검사 실패 | {item.source_path} | "
+                            f"{validation_error}"
+                        )
+                    else:
+                        item.validation_issues = report.issues
+                        item.validation_unsearchable_pages = (
+                            report.unsearchable_pages
+                        )
+                        logger.write(
+                            f"PDF 오류 검사 | {item.source_path} | "
+                            f"{item.validation_summary}"
+                        )
                 if self.printer_name:
                     output_path = print_pdf_with_printer(
                         output_path,

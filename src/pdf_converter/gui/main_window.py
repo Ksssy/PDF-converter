@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt
+from PySide6.QtCore import QPoint, QThread, Qt
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -26,7 +29,11 @@ from pdf_converter.core.models import ConversionItem, ConversionStatus
 from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.file_scanner import is_supported, scan_folder
-from pdf_converter.services.printer_service import list_installed_printers
+from pdf_converter.services.pdf_validation import build_validation_terms
+from pdf_converter.services.printer_service import (
+    list_installed_printers,
+    open_printer_properties,
+)
 from pdf_converter.services.settings import AppSettings, SettingsService
 
 
@@ -42,12 +49,21 @@ PRINTER_QUALITY_DESCRIPTIONS = {
     "고품질": "선택한 프린터에 450DPI로 출력합니다. 도면·확대 출력용입니다.",
 }
 
+COL_NUMBER = 0
+COL_FILENAME = 1
+COL_EXTENSION = 2
+COL_PAGE_RANGE = 3
+COL_STATUS = 4
+COL_VALIDATION = 5
+COL_SOURCE_PATH = 6
+EDITABLE_COLUMNS = {COL_FILENAME, COL_PAGE_RANGE, COL_SOURCE_PATH}
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"PDF변환기 v{__version__}")
-        self.resize(1100, 700)
+        self.resize(1220, 790)
         self.setAcceptDrops(True)
 
         self.settings_service = SettingsService()
@@ -82,16 +98,46 @@ class MainWindow(QMainWindow):
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["순번", "파일명", "파일형식", "페이지 범위", "상태", "원본 경로"])
+        table_help = QLabel(
+            "파일명·페이지 범위·원본 경로는 더블클릭하거나 바로 입력해 "
+            "수정할 수 있습니다. 우클릭하면 복사 메뉴가 열립니다."
+        )
+        table_help.setStyleSheet("color: #555;")
+        layout.addWidget(table_help)
+
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            [
+                "순번",
+                "파일명",
+                "파일형식",
+                "페이지 범위",
+                "상태",
+                "PDF 오류 검사",
+                "원본 경로",
+            ]
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(
+            self._show_table_context_menu
+        )
+        self.table.itemChanged.connect(self._on_table_item_changed)
+        self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setColumnWidth(0, 55)
-        self.table.setColumnWidth(1, 260)
-        self.table.setColumnWidth(2, 90)
-        self.table.setColumnWidth(3, 150)
-        self.table.setColumnWidth(4, 100)
+        self.table.setColumnWidth(COL_NUMBER, 55)
+        self.table.setColumnWidth(COL_FILENAME, 230)
+        self.table.setColumnWidth(COL_EXTENSION, 80)
+        self.table.setColumnWidth(COL_PAGE_RANGE, 120)
+        self.table.setColumnWidth(COL_STATUS, 90)
+        self.table.setColumnWidth(COL_VALIDATION, 280)
         layout.addWidget(self.table)
 
         output_layout = QHBoxLayout()
@@ -144,6 +190,18 @@ class MainWindow(QMainWindow):
         self.detect_printers_button = QPushButton("프린터 인식")
         self.detect_printers_button.clicked.connect(self.refresh_printers)
         printer_layout.addWidget(self.detect_printers_button)
+
+        self.printer_properties_button = QPushButton("프린터 속성")
+        self.printer_properties_button.setToolTip(
+            "선택한 프린터 드라이버의 인쇄 기본 설정을 엽니다."
+        )
+        self.printer_properties_button.clicked.connect(
+            self.show_printer_properties
+        )
+        printer_layout.addWidget(self.printer_properties_button)
+        self.printer_combo.currentTextChanged.connect(
+            self._update_printer_controls
+        )
         printer_layout.addStretch()
         layout.addLayout(printer_layout)
 
@@ -153,6 +211,33 @@ class MainWindow(QMainWindow):
         )
         self.printer_note.setStyleSheet("color: #9a5b00;")
         layout.addWidget(self.printer_note)
+
+        validation_layout = QHBoxLayout()
+        validation_layout.addWidget(QLabel("PDF 오류 검사"))
+        self.validate_ng_checkbox = QCheckBox("NG / N.G")
+        self.validate_hashes_checkbox = QCheckBox("##")
+        self.validate_questions_checkbox = QCheckBox("??")
+        validation_layout.addWidget(self.validate_ng_checkbox)
+        validation_layout.addWidget(self.validate_hashes_checkbox)
+        validation_layout.addWidget(self.validate_questions_checkbox)
+        validation_layout.addSpacing(15)
+        validation_layout.addWidget(QLabel("직접 입력"))
+        self.custom_validation_edit = QLineEdit()
+        self.custom_validation_edit.setPlaceholderText(
+            "쉼표로 구분: #VALUE!, #DIV/0!, ERROR"
+        )
+        self.custom_validation_edit.setToolTip(
+            "추가로 찾을 문구를 쉼표, 세미콜론 또는 줄바꿈으로 구분하세요."
+        )
+        validation_layout.addWidget(self.custom_validation_edit)
+        layout.addLayout(validation_layout)
+
+        self.validation_note = QLabel(
+            "선택된 항목만 최종 PDF의 페이지별로 검사합니다. "
+            "프린터 사용 시에는 텍스트가 그림으로 바뀌기 전에 검사합니다."
+        )
+        self.validation_note.setStyleSheet("color: #555;")
+        layout.addWidget(self.validation_note)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -190,6 +275,14 @@ class MainWindow(QMainWindow):
         if self.settings.printer_name:
             self.printer_combo.addItem(self.settings.printer_name)
             self.printer_combo.setCurrentText(self.settings.printer_name)
+        self.validate_ng_checkbox.setChecked(self.settings.validate_ng)
+        self.validate_hashes_checkbox.setChecked(self.settings.validate_hashes)
+        self.validate_questions_checkbox.setChecked(
+            self.settings.validate_questions
+        )
+        self.custom_validation_edit.setText(
+            self.settings.custom_validation_terms
+        )
         self._update_quality_description(self.quality_combo.currentText())
         self._update_printer_controls()
 
@@ -201,9 +294,16 @@ class MainWindow(QMainWindow):
         )
         self.quality_description.setText(descriptions.get(quality, ""))
 
-    def _update_printer_controls(self, _index: int | None = None) -> None:
+    def _update_printer_controls(
+        self,
+        _value: int | str | None = None,
+    ) -> None:
         use_printer = bool(self.output_method_combo.currentData())
         self.printer_combo.setEnabled(use_printer)
+        self.detect_printers_button.setEnabled(use_printer)
+        self.printer_properties_button.setEnabled(
+            use_printer and bool(self.printer_combo.currentText().strip())
+        )
         self.printer_note.setVisible(use_printer)
         self._update_quality_description(self.quality_combo.currentText())
 
@@ -228,6 +328,26 @@ class MainWindow(QMainWindow):
                 "Windows에 설치된 프린터를 찾지 못했습니다.",
             )
 
+        self._update_printer_controls()
+
+    def show_printer_properties(self) -> None:
+        printer_name = self.printer_combo.currentText().strip()
+        if not printer_name:
+            QMessageBox.warning(
+                self,
+                "프린터 속성",
+                "프린터 인식 버튼을 누르고 프린터를 선택해주세요.",
+            )
+            return
+        try:
+            open_printer_properties(printer_name)
+        except RuntimeError as error:
+            QMessageBox.critical(self, "프린터 속성", str(error))
+        else:
+            self.statusBar().showMessage(
+                f"{printer_name} 드라이버 설정을 적용했습니다."
+            )
+
     def add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "변환할 파일 선택")
         self._add_paths(Path(path) for path in paths)
@@ -247,21 +367,116 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _refresh_table(self) -> None:
-        self.table.setRowCount(len(self.items))
-        for row, item in enumerate(self.items):
-            values = [str(row + 1), item.filename, item.extension, item.page_range, item.status.value, str(item.source_path)]
-            for column, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                if column != 3:
-                    cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, column, cell)
+        self.table.blockSignals(True)
+        try:
+            self.table.setRowCount(len(self.items))
+            for row, item in enumerate(self.items):
+                values = [
+                    str(row + 1),
+                    item.filename,
+                    item.extension,
+                    item.page_range,
+                    item.status.value,
+                    item.validation_summary,
+                    str(item.source_path),
+                ]
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(value)
+                    if column not in EDITABLE_COLUMNS:
+                        cell.setFlags(
+                            cell.flags() & ~Qt.ItemFlag.ItemIsEditable
+                        )
+                    else:
+                        cell.setToolTip(
+                            "더블클릭하거나 선택 후 바로 입력하여 수정할 수 있습니다."
+                        )
+                    if column == COL_VALIDATION:
+                        cell.setToolTip(value)
+                    self.table.setItem(row, column, cell)
+        finally:
+            self.table.blockSignals(False)
         self.statusBar().showMessage(f"파일 {len(self.items)}개")
 
     def _sync_page_ranges(self) -> None:
         for row, item in enumerate(self.items):
-            cell = self.table.item(row, 3)
+            cell = self.table.item(row, COL_PAGE_RANGE)
             if cell:
                 item.page_range = cell.text().strip() or "전체"
+
+    def _on_table_item_changed(self, cell: QTableWidgetItem) -> None:
+        row = cell.row()
+        column = cell.column()
+        if not (0 <= row < len(self.items)) or column not in EDITABLE_COLUMNS:
+            return
+
+        item = self.items[row]
+        value = cell.text().strip()
+        if column == COL_PAGE_RANGE:
+            item.page_range = value or "전체"
+            return
+
+        try:
+            if column == COL_FILENAME:
+                if not value:
+                    raise ValueError("파일명은 비워둘 수 없습니다.")
+                item.source_path = item.source_path.with_name(value)
+            elif column == COL_SOURCE_PATH:
+                if not value:
+                    raise ValueError("원본 경로는 비워둘 수 없습니다.")
+                item.source_path = Path(value.strip('"'))
+        except (OSError, ValueError) as error:
+            self.statusBar().showMessage(f"입력값 오류: {error}")
+        self._refresh_table()
+        self.table.selectRow(row)
+
+    def _show_table_context_menu(self, position: QPoint) -> None:
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        self.table.setCurrentCell(index.row(), index.column())
+
+        menu = QMenu(self)
+        menu.addAction("선택 셀 복사", self.copy_current_cell)
+        menu.addAction("파일명 복사", self.copy_current_filename)
+        menu.addAction("원본 경로 복사", self.copy_current_source_path)
+        menu.addAction("행 전체 복사", self.copy_current_row)
+        menu.addSeparator()
+        edit_action = menu.addAction("선택 셀 수정", self.edit_current_cell)
+        edit_action.setEnabled(index.column() in EDITABLE_COLUMNS)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def copy_current_cell(self) -> None:
+        cell = self.table.currentItem()
+        if cell is not None:
+            QApplication.clipboard().setText(cell.text())
+
+    def copy_current_filename(self) -> None:
+        self._copy_current_column(COL_FILENAME)
+
+    def copy_current_source_path(self) -> None:
+        self._copy_current_column(COL_SOURCE_PATH)
+
+    def copy_current_row(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        values = [
+            self.table.item(row, column).text()
+            for column in range(self.table.columnCount())
+            if self.table.item(row, column) is not None
+        ]
+        QApplication.clipboard().setText("\t".join(values))
+
+    def _copy_current_column(self, column: int) -> None:
+        row = self.table.currentRow()
+        cell = self.table.item(row, column) if row >= 0 else None
+        if cell is not None:
+            QApplication.clipboard().setText(cell.text())
+
+    def edit_current_cell(self) -> None:
+        cell = self.table.currentItem()
+        if cell is not None and cell.column() in EDITABLE_COLUMNS:
+            self.table.editItem(cell)
 
     def remove_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
@@ -338,7 +553,18 @@ class MainWindow(QMainWindow):
             item.status = ConversionStatus.WAITING
             item.output_path = None
             item.error = ""
+            item.validation_checked = False
+            item.validation_issues.clear()
+            item.validation_unsearchable_pages.clear()
+            item.validation_error = ""
         self._refresh_table()
+
+        validation_terms = build_validation_terms(
+            self.validate_ng_checkbox.isChecked(),
+            self.validate_hashes_checkbox.isChecked(),
+            self.validate_questions_checkbox.isChecked(),
+            self.custom_validation_edit.text(),
+        )
 
         self.conversion_thread = QThread(self)
         self.conversion_worker = ConversionWorker(
@@ -347,6 +573,7 @@ class MainWindow(QMainWindow):
             self.quality_combo.currentText(),
             self.color_combo.currentText(),
             printer_name if use_pdf_printer else "",
+            validation_terms,
         )
         self.conversion_worker.moveToThread(self.conversion_thread)
         self.conversion_thread.started.connect(self.conversion_worker.run)
@@ -442,10 +669,16 @@ class MainWindow(QMainWindow):
         self.color_combo.setEnabled(enabled)
         self.output_method_combo.setEnabled(enabled)
         self.detect_printers_button.setEnabled(enabled)
+        self.printer_properties_button.setEnabled(enabled)
+        self.validate_ng_checkbox.setEnabled(enabled)
+        self.validate_hashes_checkbox.setEnabled(enabled)
+        self.validate_questions_checkbox.setEnabled(enabled)
+        self.custom_validation_edit.setEnabled(enabled)
         if enabled:
             self._update_printer_controls()
         else:
             self.printer_combo.setEnabled(False)
+            self.printer_properties_button.setEnabled(False)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -475,6 +708,10 @@ class MainWindow(QMainWindow):
                 include_subfolders=True,
                 use_pdf_printer=bool(self.output_method_combo.currentData()),
                 printer_name=self.printer_combo.currentText().strip(),
+                validate_ng=self.validate_ng_checkbox.isChecked(),
+                validate_hashes=self.validate_hashes_checkbox.isChecked(),
+                validate_questions=self.validate_questions_checkbox.isChecked(),
+                custom_validation_terms=self.custom_validation_edit.text(),
             )
         )
         event.accept()
