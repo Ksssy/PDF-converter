@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Qt
 from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pdf_converter.core.models import ConversionItem
+from pdf_converter.core.models import ConversionItem, ConversionStatus
+from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.file_scanner import is_supported, scan_folder
 from pdf_converter.services.settings import AppSettings, SettingsService
 
@@ -36,6 +37,9 @@ class MainWindow(QMainWindow):
         self.settings_service = SettingsService()
         self.settings = self.settings_service.load()
         self.items: list[ConversionItem] = []
+        self.conversion_thread: QThread | None = None
+        self.conversion_worker: ConversionWorker | None = None
+        self.is_paused = False
 
         self._build_ui()
         self._restore_settings()
@@ -46,6 +50,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
 
         toolbar = QHBoxLayout()
+        self.file_action_buttons: list[QPushButton] = []
         for label, handler in (
             ("파일 추가", self.add_files),
             ("폴더 추가", self.add_folder),
@@ -56,6 +61,7 @@ class MainWindow(QMainWindow):
         ):
             button = QPushButton(label)
             button.clicked.connect(handler)
+            self.file_action_buttons.append(button)
             toolbar.addWidget(button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -101,12 +107,19 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.addStretch()
-        for label, enabled in (("변환 시작", True), ("일시정지", False), ("변환 중지", False)):
-            button = QPushButton(label)
-            button.setEnabled(enabled)
-            if label == "변환 시작":
-                button.clicked.connect(self.start_conversion_placeholder)
-            actions.addWidget(button)
+        self.start_button = QPushButton("변환 시작")
+        self.start_button.clicked.connect(self.start_conversion)
+        actions.addWidget(self.start_button)
+
+        self.pause_button = QPushButton("일시정지")
+        self.pause_button.setEnabled(False)
+        self.pause_button.clicked.connect(self.toggle_pause)
+        actions.addWidget(self.pause_button)
+
+        self.stop_button = QPushButton("변환 중지")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop_conversion)
+        actions.addWidget(self.stop_button)
         layout.addLayout(actions)
 
         self.statusBar().showMessage("준비")
@@ -182,19 +195,125 @@ class MainWindow(QMainWindow):
         if folder:
             self.output_edit.setText(folder)
 
-    def start_conversion_placeholder(self) -> None:
+    def start_conversion(self) -> None:
         self._sync_page_ranges()
         if not self.items:
             QMessageBox.warning(self, "확인", "변환할 파일을 추가해주세요.")
             return
-        if not self.output_edit.text().strip():
+        output_text = self.output_edit.text().strip()
+        if not output_text:
             QMessageBox.warning(self, "확인", "PDF 저장 폴더를 선택해주세요.")
             return
+
+        output_directory = Path(output_text)
+        try:
+            output_directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            QMessageBox.critical(self, "저장 폴더 오류", str(error))
+            return
+
+        for item in self.items:
+            item.status = ConversionStatus.WAITING
+            item.output_path = None
+            item.error = ""
+        self._refresh_table()
+
+        self.conversion_thread = QThread(self)
+        self.conversion_worker = ConversionWorker(
+            list(self.items),
+            output_directory,
+            self.quality_combo.currentText(),
+            self.color_combo.currentText(),
+        )
+        self.conversion_worker.moveToThread(self.conversion_thread)
+        self.conversion_thread.started.connect(self.conversion_worker.run)
+        self.conversion_worker.item_started.connect(self._on_item_started)
+        self.conversion_worker.item_succeeded.connect(self._on_item_succeeded)
+        self.conversion_worker.item_failed.connect(self._on_item_failed)
+        self.conversion_worker.item_skipped.connect(self._on_item_skipped)
+        self.conversion_worker.progress_changed.connect(self.progress.setValue)
+        self.conversion_worker.completed.connect(self._on_conversion_completed)
+        self.conversion_worker.completed.connect(self.conversion_worker.deleteLater)
+        self.conversion_worker.completed.connect(self.conversion_thread.quit)
+        self.conversion_thread.finished.connect(self.conversion_thread.deleteLater)
+        self.conversion_thread.finished.connect(self._cleanup_conversion)
+
+        self.progress.setValue(0)
+        self.start_button.setEnabled(False)
+        self.pause_button.setEnabled(True)
+        self.stop_button.setEnabled(True)
+        self._set_inputs_enabled(False)
+        self.statusBar().showMessage("변환 중")
+        self.conversion_thread.start()
+
+    def toggle_pause(self) -> None:
+        if self.conversion_worker is None:
+            return
+        self.is_paused = not self.is_paused
+        self.conversion_worker.set_paused(self.is_paused)
+        self.pause_button.setText("계속" if self.is_paused else "일시정지")
+        self.statusBar().showMessage("일시정지" if self.is_paused else "변환 중")
+
+    def stop_conversion(self) -> None:
+        if self.conversion_worker is not None:
+            self.conversion_worker.request_stop()
+            self.statusBar().showMessage("중지 요청 중")
+            self.pause_button.setEnabled(False)
+            self.stop_button.setEnabled(False)
+
+    def _update_item_status(self, index: int, status: ConversionStatus) -> None:
+        if 0 <= index < len(self.items):
+            self.items[index].status = status
+            self._refresh_table()
+
+    def _on_item_started(self, index: int) -> None:
+        self._update_item_status(index, ConversionStatus.CONVERTING)
+
+    def _on_item_succeeded(self, index: int, output_path: str) -> None:
+        self.items[index].output_path = Path(output_path)
+        self._update_item_status(index, ConversionStatus.SUCCESS)
+
+    def _on_item_failed(self, index: int, error: str) -> None:
+        self.items[index].error = error
+        self._update_item_status(index, ConversionStatus.FAILED)
+
+    def _on_item_skipped(self, index: int) -> None:
+        self._update_item_status(index, ConversionStatus.SKIPPED)
+
+    def _on_conversion_completed(
+        self,
+        success_count: int,
+        failure_count: int,
+        skipped_count: int,
+        log_path: str,
+    ) -> None:
+        self.statusBar().showMessage("변환 완료")
         QMessageBox.information(
             self,
-            "1차 개발 상태",
-            "GUI와 파일 관리 기반이 완성되었습니다.\n다음 단계에서 Excel/Word COM 변환 엔진을 연결합니다.",
+            "변환 결과",
+            f"성공: {success_count}개\n"
+            f"실패: {failure_count}개\n"
+            f"건너뜀: {skipped_count}개\n\n"
+            f"로그: {log_path}",
         )
+
+    def _cleanup_conversion(self) -> None:
+        self.conversion_worker = None
+        self.conversion_thread = None
+        self.is_paused = False
+        self.start_button.setEnabled(True)
+        self.pause_button.setEnabled(False)
+        self.pause_button.setText("일시정지")
+        self.stop_button.setEnabled(False)
+        self._set_inputs_enabled(True)
+
+    def _set_inputs_enabled(self, enabled: bool) -> None:
+        for button in self.file_action_buttons:
+            button.setEnabled(enabled)
+        self.table.setEnabled(enabled)
+        self.output_edit.setEnabled(enabled)
+        self.quality_combo.setEnabled(enabled)
+        self.color_combo.setEnabled(enabled)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -212,6 +331,10 @@ class MainWindow(QMainWindow):
         event.acceptProposedAction()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.conversion_thread is not None and self.conversion_thread.isRunning():
+            QMessageBox.warning(self, "변환 중", "변환을 중지한 뒤 프로그램을 종료해주세요.")
+            event.ignore()
+            return
         self.settings_service.save(
             AppSettings(
                 output_directory=self.output_edit.text().strip(),
