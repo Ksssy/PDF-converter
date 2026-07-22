@@ -11,6 +11,10 @@ from pdf_converter.gui.main_window import (
     COL_SOURCE_PATH,
     MainWindow,
 )
+from pdf_converter.services.excel_validation import (
+    EXCEL_VALIDATION_FAST,
+    EXCEL_VALIDATION_PRECISE,
+)
 
 
 def test_table_allows_filename_path_editing_and_copy(
@@ -103,6 +107,28 @@ def test_file_and_folder_dialogs_share_last_session_location(
     assert file_start_directories == [str(tmp_path), str(selected_folder)]
     assert folder_start_directories == [str(file_directory)]
     assert window.last_browse_directory == selected_folder
+
+    window.close()
+    app.processEvents()
+
+
+def test_excel_fast_and_precise_checkboxes_are_mutually_exclusive(
+    tmp_path: Path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.settings_service.path = tmp_path / "settings.json"
+
+    window.validate_excel_fast_checkbox.setChecked(True)
+    assert window._selected_excel_validation_mode() == EXCEL_VALIDATION_FAST
+    assert not window.validate_excel_precise_checkbox.isChecked()
+
+    window.validate_excel_precise_checkbox.setChecked(True)
+    assert window._selected_excel_validation_mode() == EXCEL_VALIDATION_PRECISE
+    assert not window.validate_excel_fast_checkbox.isChecked()
+
+    window.validate_excel_precise_checkbox.setChecked(False)
+    assert window._selected_excel_validation_mode() == ""
 
     window.close()
     app.processEvents()

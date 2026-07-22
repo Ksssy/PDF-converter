@@ -4,6 +4,8 @@ import pytest
 
 from pdf_converter.core.models import ConversionItem, ExcelValidationIssue
 from pdf_converter.services.excel_validation import (
+    XL_CELL_TYPE_VISIBLE,
+    _get_visible_print_range,
     classify_excel_display_text,
     excel_column_name,
     is_excel_source,
@@ -61,3 +63,40 @@ def test_excel_source_extensions() -> None:
     assert is_excel_source(Path("legacy.xls"))
     assert is_excel_source(Path("binary.xlsb"))
     assert not is_excel_source(Path("report.docx"))
+
+
+def test_visible_print_range_uses_defined_print_area() -> None:
+    class FakeVisibleRange:
+        pass
+
+    visible_range = FakeVisibleRange()
+
+    class FakePrintRange:
+        def SpecialCells(self, cell_type: int):
+            assert cell_type == XL_CELL_TYPE_VISIBLE
+            return visible_range
+
+    class FakePageSetup:
+        PrintArea = "$A$1:$D$20"
+
+    class FakeWorksheet:
+        PageSetup = FakePageSetup()
+
+        def Range(self, address: str):
+            assert address == "$A$1:$D$20"
+            return FakePrintRange()
+
+    assert _get_visible_print_range(FakeWorksheet()) is visible_range
+
+
+def test_visible_print_range_skips_sheet_without_print_area() -> None:
+    class FakePageSetup:
+        PrintArea = ""
+
+    class FakeWorksheet:
+        PageSetup = FakePageSetup()
+
+        def Range(self, _address: str):
+            raise AssertionError("Range must not be read without a print area")
+
+    assert _get_visible_print_range(FakeWorksheet()) is None

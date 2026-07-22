@@ -30,6 +30,11 @@ from pdf_converter.gui.result_dialog import ResultDialog
 from pdf_converter.services.conversion_worker import ConversionWorker
 from pdf_converter.services.excel_validation import (
     EXCEL_ERROR_HELP_TEXT,
+    EXCEL_FAST_HELP_TEXT,
+    EXCEL_PRECISE_HELP_TEXT,
+    EXCEL_SCOPE_HELP_TEXT,
+    EXCEL_VALIDATION_FAST,
+    EXCEL_VALIDATION_PRECISE,
     is_excel_source,
 )
 from pdf_converter.services.file_scanner import is_supported, scan_folder
@@ -243,15 +248,38 @@ class MainWindow(QMainWindow):
         validation_layout.addWidget(self.custom_validation_edit)
         validation_layout.addSpacing(20)
         validation_layout.addWidget(QLabel("Excel 오류 검사"))
-        self.validate_excel_errors_checkbox = QCheckBox("엑셀 주요 오류")
-        self.validate_excel_errors_checkbox.setToolTip(EXCEL_ERROR_HELP_TEXT)
-        validation_layout.addWidget(self.validate_excel_errors_checkbox)
+        self.validate_excel_fast_checkbox = QCheckBox("빠른 검사")
+        self.validate_excel_fast_checkbox.setToolTip(EXCEL_FAST_HELP_TEXT)
+        self.validate_excel_precise_checkbox = QCheckBox("정밀 검사")
+        self.validate_excel_precise_checkbox.setToolTip(
+            EXCEL_PRECISE_HELP_TEXT
+        )
+        self.validate_excel_fast_checkbox.toggled.connect(
+            self._on_excel_fast_toggled
+        )
+        self.validate_excel_precise_checkbox.toggled.connect(
+            self._on_excel_precise_toggled
+        )
+        validation_layout.addWidget(self.validate_excel_fast_checkbox)
+        validation_layout.addWidget(self.validate_excel_precise_checkbox)
         layout.addLayout(validation_layout)
 
         self.excel_error_help = QLabel(EXCEL_ERROR_HELP_TEXT)
         self.excel_error_help.setWordWrap(True)
         self.excel_error_help.setStyleSheet("color: #7a3e00;")
         layout.addWidget(self.excel_error_help)
+
+        self.excel_mode_help = QLabel(
+            f"{EXCEL_FAST_HELP_TEXT}  {EXCEL_PRECISE_HELP_TEXT}"
+        )
+        self.excel_mode_help.setWordWrap(True)
+        self.excel_mode_help.setStyleSheet("color: #555;")
+        layout.addWidget(self.excel_mode_help)
+
+        self.excel_scope_help = QLabel(EXCEL_SCOPE_HELP_TEXT)
+        self.excel_scope_help.setWordWrap(True)
+        self.excel_scope_help.setStyleSheet("color: #555;")
+        layout.addWidget(self.excel_scope_help)
 
         self.validation_note = QLabel(
             "파일별 PDF 검사와 Excel 검사를 독립적으로 선택합니다. "
@@ -303,8 +331,21 @@ class MainWindow(QMainWindow):
         self.validate_questions_checkbox.setChecked(
             self.settings.validate_questions
         )
-        self.validate_excel_errors_checkbox.setChecked(
-            self.settings.validate_excel_errors
+        excel_mode = self.settings.excel_validation_mode
+        if excel_mode not in {
+            EXCEL_VALIDATION_FAST,
+            EXCEL_VALIDATION_PRECISE,
+        }:
+            excel_mode = (
+                EXCEL_VALIDATION_FAST
+                if self.settings.validate_excel_errors
+                else ""
+            )
+        self.validate_excel_fast_checkbox.setChecked(
+            excel_mode == EXCEL_VALIDATION_FAST
+        )
+        self.validate_excel_precise_checkbox.setChecked(
+            excel_mode == EXCEL_VALIDATION_PRECISE
         )
         self.custom_validation_edit.setText(
             self.settings.custom_validation_terms
@@ -319,6 +360,21 @@ class MainWindow(QMainWindow):
             else QUALITY_DESCRIPTIONS
         )
         self.quality_description.setText(descriptions.get(quality, ""))
+
+    def _on_excel_fast_toggled(self, checked: bool) -> None:
+        if checked:
+            self.validate_excel_precise_checkbox.setChecked(False)
+
+    def _on_excel_precise_toggled(self, checked: bool) -> None:
+        if checked:
+            self.validate_excel_fast_checkbox.setChecked(False)
+
+    def _selected_excel_validation_mode(self) -> str:
+        if self.validate_excel_precise_checkbox.isChecked():
+            return EXCEL_VALIDATION_PRECISE
+        if self.validate_excel_fast_checkbox.isChecked():
+            return EXCEL_VALIDATION_FAST
+        return ""
 
     def _update_printer_controls(
         self,
@@ -677,7 +733,7 @@ class MainWindow(QMainWindow):
             self.color_combo.currentText(),
             printer_name if use_pdf_printer else "",
             validation_terms,
-            self.validate_excel_errors_checkbox.isChecked(),
+            self._selected_excel_validation_mode(),
         )
         self.conversion_worker.moveToThread(self.conversion_thread)
         self.conversion_thread.started.connect(self.conversion_worker.run)
@@ -777,7 +833,8 @@ class MainWindow(QMainWindow):
         self.validate_ng_checkbox.setEnabled(enabled)
         self.validate_hashes_checkbox.setEnabled(enabled)
         self.validate_questions_checkbox.setEnabled(enabled)
-        self.validate_excel_errors_checkbox.setEnabled(enabled)
+        self.validate_excel_fast_checkbox.setEnabled(enabled)
+        self.validate_excel_precise_checkbox.setEnabled(enabled)
         self.custom_validation_edit.setEnabled(enabled)
         if enabled:
             self._update_printer_controls()
@@ -817,7 +874,10 @@ class MainWindow(QMainWindow):
                 validate_hashes=self.validate_hashes_checkbox.isChecked(),
                 validate_questions=self.validate_questions_checkbox.isChecked(),
                 validate_excel_errors=(
-                    self.validate_excel_errors_checkbox.isChecked()
+                    bool(self._selected_excel_validation_mode())
+                ),
+                excel_validation_mode=(
+                    self._selected_excel_validation_mode()
                 ),
                 custom_validation_terms=self.custom_validation_edit.text(),
             )

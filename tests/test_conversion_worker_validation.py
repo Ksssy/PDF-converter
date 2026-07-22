@@ -3,6 +3,10 @@ from pathlib import Path
 from pdf_converter.core.models import ConversionItem, ExcelValidationIssue
 from pdf_converter.services import conversion_worker as worker_module
 from pdf_converter.services.conversion_worker import ConversionWorker
+from pdf_converter.services.excel_validation import (
+    EXCEL_VALIDATION_FAST,
+    EXCEL_VALIDATION_PRECISE,
+)
 from pdf_converter.services.pdf_validation import PdfValidationReport
 
 
@@ -82,8 +86,12 @@ def test_worker_inspects_source_excel_and_records_cell_locations(
         def write(self, _message: str) -> Path:
             return tmp_path / "conversion.txt"
 
-    def fake_excel_inspect(source: Path) -> list[ExcelValidationIssue]:
-        operation_order.append(f"excel:{source.name}")
+    def fake_excel_inspect(
+        source: Path,
+        *,
+        recalculate: bool,
+    ) -> list[ExcelValidationIssue]:
+        operation_order.append(f"excel:{source.name}:{recalculate}")
         return [
             ExcelValidationIssue(
                 sheet_name="수량",
@@ -113,12 +121,15 @@ def test_worker_inspects_source_excel_and_records_cell_locations(
         tmp_path,
         "일반",
         "컬러",
-        validate_excel_errors=True,
+        excel_validation_mode=EXCEL_VALIDATION_PRECISE,
     )
 
     worker.run()
 
-    assert operation_order == ["excel:quantity.xlsx", "convert:quantity.xlsx"]
+    assert operation_order == [
+        "excel:quantity.xlsx:True",
+        "convert:quantity.xlsx",
+    ]
     assert item.validation_checked
     assert item.validation_summary == "엑셀 [수량] 8행 C열(C8): #N/A"
 
@@ -141,8 +152,12 @@ def test_worker_keeps_pdf_and_excel_validation_independent(
         def write(self, _message: str) -> Path:
             return tmp_path / "conversion.txt"
 
-    def fake_excel_inspect(_source: Path) -> list[ExcelValidationIssue]:
-        calls.append("excel")
+    def fake_excel_inspect(
+        _source: Path,
+        *,
+        recalculate: bool,
+    ) -> list[ExcelValidationIssue]:
+        calls.append(f"excel:{recalculate}")
         return []
 
     def fake_pdf_inspect(
@@ -173,11 +188,11 @@ def test_worker_keeps_pdf_and_excel_validation_independent(
         "일반",
         "컬러",
         validation_terms=["NG / N.G"],
-        validate_excel_errors=True,
+        excel_validation_mode=EXCEL_VALIDATION_FAST,
     )
 
     worker.run()
 
-    assert calls == ["excel", "pdf"]
+    assert calls == ["excel:False", "pdf"]
     assert excel_only.validation_checked
     assert pdf_only.validation_checked

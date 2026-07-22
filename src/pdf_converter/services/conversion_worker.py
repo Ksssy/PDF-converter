@@ -9,6 +9,7 @@ from pdf_converter.converters import create_default_registry
 from pdf_converter.converters.base import ConversionOptions
 from pdf_converter.core.models import ConversionItem
 from pdf_converter.services.excel_validation import (
+    EXCEL_VALIDATION_PRECISE,
     inspect_excel_for_errors,
     is_excel_source,
 )
@@ -33,7 +34,7 @@ class ConversionWorker(QObject):
         color_mode: str,
         printer_name: str = "",
         validation_terms: list[str] | None = None,
-        validate_excel_errors: bool = False,
+        excel_validation_mode: str = "",
     ) -> None:
         super().__init__()
         self.items = items
@@ -42,7 +43,7 @@ class ConversionWorker(QObject):
         self.color_mode = color_mode
         self.printer_name = printer_name
         self.validation_terms = validation_terms or []
-        self.validate_excel_errors = validate_excel_errors
+        self.excel_validation_mode = excel_validation_mode
         self._pause_event = Event()
         self._stop_event = Event()
 
@@ -79,13 +80,19 @@ class ConversionWorker(QObject):
             try:
                 if (
                     item.excel_validation_enabled
-                    and self.validate_excel_errors
+                    and self.excel_validation_mode
                     and is_excel_source(item.source_path)
                 ):
                     item.validation_checked = True
                     try:
                         item.excel_validation_issues = (
-                            inspect_excel_for_errors(item.source_path)
+                            inspect_excel_for_errors(
+                                item.source_path,
+                                recalculate=(
+                                    self.excel_validation_mode
+                                    == EXCEL_VALIDATION_PRECISE
+                                ),
+                            )
                         )
                     except Exception as validation_error:
                         _append_validation_error(item, str(validation_error))

@@ -16,7 +16,9 @@ class AppSettings:
     validate_ng: bool = True
     validate_hashes: bool = True
     validate_questions: bool = True
+    # Kept for compatibility with settings saved by v0.9 and earlier.
     validate_excel_errors: bool = True
+    excel_validation_mode: str = ""
     custom_validation_terms: str = ""
 
 

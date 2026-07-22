@@ -17,17 +17,38 @@ EXCEL_ERROR_HELP_TEXT = (
     "#N/A (참조 값 없음), #DIV/0! (0으로 나눔), "
     "#NAME? (함수·이름 오류), #VALUE! (인수 형식 오류)"
 )
+EXCEL_VALIDATION_FAST = "fast"
+EXCEL_VALIDATION_PRECISE = "precise"
+EXCEL_FAST_HELP_TEXT = (
+    "빠른 검사: 마지막 저장 결과를 다시 계산하지 않고 검사합니다. "
+    "빠르지만 저장 후 계산되지 않은 오류는 놓칠 수 있습니다."
+)
+EXCEL_PRECISE_HELP_TEXT = (
+    "정밀 검사: 모든 수식을 다시 계산한 뒤 검사합니다. "
+    "최신 계산 오류를 찾지만 수식이 많은 파일은 오래 걸립니다."
+)
+EXCEL_SCOPE_HELP_TEXT = (
+    "검사 범위: 인쇄영역으로 지정된 보이는 셀만 검사합니다. "
+    "인쇄영역이 없는 시트와 숨김 시트·행·열·접힌 그룹은 제외합니다."
+)
 
 XL_CELL_TYPE_CONSTANTS = 2
 XL_CELL_TYPE_FORMULAS = -4123
+XL_CELL_TYPE_VISIBLE = 12
+XL_CALCULATION_MANUAL = -4135
+XL_SHEET_VISIBLE = -1
 
 
 def is_excel_source(source: Path) -> bool:
     return source.suffix.lower() in EXCEL_EXTENSIONS
 
 
-def inspect_excel_for_errors(source: Path) -> list[ExcelValidationIssue]:
-    """Inspect displayed values in the source workbook and return cell locations."""
+def inspect_excel_for_errors(
+    source: Path,
+    *,
+    recalculate: bool = False,
+) -> list[ExcelValidationIssue]:
+    """Inspect visible print-area cells and return their Excel error locations."""
     pythoncom.CoInitialize()
     application = None
     workbook = None
@@ -39,6 +60,8 @@ def inspect_excel_for_errors(source: Path) -> list[ExcelValidationIssue]:
         application.AskToUpdateLinks = False
         with suppress(Exception):
             application.AutomationSecurity = 3
+        with suppress(Exception):
+            application.Calculation = XL_CALCULATION_MANUAL
 
         workbook = application.Workbooks.Open(
             str(source.resolve()),
@@ -47,20 +70,25 @@ def inspect_excel_for_errors(source: Path) -> list[ExcelValidationIssue]:
             IgnoreReadOnlyRecommended=True,
             AddToMru=False,
         )
-        with suppress(Exception):
+        if recalculate:
             application.CalculateFull()
 
         issues: list[ExcelValidationIssue] = []
         for worksheet in workbook.Worksheets:
+            if int(worksheet.Visible) != XL_SHEET_VISIBLE:
+                continue
+            visible_print_range = _get_visible_print_range(worksheet)
+            if visible_print_range is None:
+                continue
+
             sheet_issues: list[ExcelValidationIssue] = []
             seen_addresses: set[str] = set()
-            used_range = worksheet.UsedRange
             for cell_type in (
                 XL_CELL_TYPE_CONSTANTS,
                 XL_CELL_TYPE_FORMULAS,
             ):
                 try:
-                    cells = used_range.SpecialCells(cell_type).Cells
+                    cells = visible_print_range.SpecialCells(cell_type).Cells
                 except Exception:
                     continue
                 for cell in cells:
@@ -99,6 +127,16 @@ def inspect_excel_for_errors(source: Path) -> list[ExcelValidationIssue]:
             with suppress(Exception):
                 application.Quit()
         pythoncom.CoUninitialize()
+
+
+def _get_visible_print_range(worksheet):
+    try:
+        print_area = str(worksheet.PageSetup.PrintArea or "").strip()
+        if not print_area:
+            return None
+        return worksheet.Range(print_area).SpecialCells(XL_CELL_TYPE_VISIBLE)
+    except Exception:
+        return None
 
 
 def classify_excel_display_text(display_text: str) -> str | None:

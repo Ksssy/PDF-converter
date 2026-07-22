@@ -24,6 +24,7 @@ def test_settings_round_trip_printer_selection(tmp_path: Path) -> None:
         use_pdf_printer=True,
         printer_name="My PDF Printer",
         validate_excel_errors=False,
+        excel_validation_mode="precise",
     )
 
     service.save(expected)
